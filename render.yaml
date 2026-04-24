@@ -3,20 +3,19 @@ services:
     name: tasksync-notifications
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: node server.js
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        sync: false
       - key: VITE_FIREBASE_PROJECT_ID
         value: tasksync-70aa9
       - key: SMTP_USER
         value: tasksyncscheduler@gmail.com
+      - key: FRONTEND_URL
+        value: https://tasksync-70aa9.web.app
       - key: SMTP_PASSWORD
         sync: false
       - key: SERVER_SECRET
         sync: false
-      - key: FRONTEND_URL
-        value: https://tasksync-70aa9.web.app
