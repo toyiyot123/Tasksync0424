@@ -60,9 +60,9 @@ async function getAllUsers() {
 }
 
 /**
- * Get nearly-due tasks for a user
+ * Get tasks for a user within specified time window
  */
-async function getUserNearlyDueTasks(userId) {
+async function getUserTasksInTimeWindow(userId, hoursFromNow) {
   try {
     const tasksCollection = collection(db, 'users', userId, 'tasks');
     const snapshot = await getDocs(tasksCollection);
@@ -72,7 +72,7 @@ async function getUserNearlyDueTasks(userId) {
     }
 
     const now = new Date();
-    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const timeWindow = new Date(now.getTime() + hoursFromNow * 60 * 60 * 1000);
 
     const tasks = [];
     snapshot.forEach(doc => {
@@ -88,8 +88,8 @@ async function getUserNearlyDueTasks(userId) {
         return; // Skip if no due date
       }
 
-      // Filter for nearly-due tasks (within 24 hours, not completed)
-      if (dueDate >= now && dueDate <= tomorrow && data.status !== 'completed') {
+      // Filter for tasks within time window and not completed
+      if (dueDate >= now && dueDate <= timeWindow && data.status !== 'completed') {
         tasks.push({
           id: doc.id,
           title: data.title || 'Untitled',
@@ -106,6 +106,19 @@ async function getUserNearlyDueTasks(userId) {
     return [];
   }
 }
+
+/**
+ * Get nearly-due tasks (within 24 hours)
+ */
+async function getUserNearlyDueTasks(userId) {
+  return getUserTasksInTimeWindow(userId, 24);
+}
+
+/**
+ * Get reminder tasks (due within 1 hour) - for hourly reminders
+ */
+async function getUserReminderTasks(userId) {
+  return getUserTasksInTimeWindow(userId, 1);
 
 /**
  * Send notification to a specific user
@@ -140,10 +153,13 @@ async function sendNotificationToUser(user, tasks) {
 
 /**
  * Send notifications to all users
+ * @param {string} mode - 'nearly-due' (24 hours) or 'reminder' (1 hour)
  */
-async function sendNotificationsToAllUsers() {
+async function sendNotificationsToAllUsers(mode = 'nearly-due') {
   try {
+    const modeLabel = mode === 'reminder' ? '⏰ HOURLY REMINDER' : '📅 NEARLY-DUE NOTIFICATION';
     console.log('🔥 Firebase Email Notification System\n');
+    console.log(`${modeLabel}`);
     console.log(`📧 Project: ${process.env.VITE_FIREBASE_PROJECT_ID}`);
     console.log(`📤 Sender: ${process.env.SMTP_USER}`);
     console.log(`🖥️  Server: ${EMAIL_SERVER_URL}\n`);
@@ -168,30 +184,36 @@ async function sendNotificationsToAllUsers() {
 
     let successCount = 0;
     let totalTasksNotified = 0;
+    const taskFetcher = mode === 'reminder' ? getUserReminderTasks : getUserNearlyDueTasks;
 
     for (const user of users) {
       try {
         console.log(`📨 Processing user: ${user.email}`);
 
-        const nearlyDueTasks = await getUserNearlyDueTasks(user.id);
+        const tasks = await taskFetcher(user.id);
 
-        if (nearlyDueTasks.length === 0) {
-          console.log(`  ℹ️ No nearly-due tasks for ${user.email}`);
-          console.log(`     💡 Create tasks with dueDate within 24 hours\n`);
+        if (tasks.length === 0) {
+          const taskType = mode === 'reminder' ? 'tasks due within the next hour' : 'nearly-due tasks';
+          console.log(`  ℹ️ No ${taskType} for ${user.email}`);
+          if (mode !== 'reminder') {
+            console.log(`     💡 Create tasks with dueDate within 24 hours`);
+          }
+          console.log('');
           continue;
         }
 
-        console.log(`  📋 Found ${nearlyDueTasks.length} nearly-due task(s):`);
-        nearlyDueTasks.forEach(task => {
+        const taskLabel = mode === 'reminder' ? 'REMINDER' : 'NEARLY-DUE';
+        console.log(`  📋 Found ${tasks.length} ${taskLabel} task(s):`);
+        tasks.forEach(task => {
           console.log(`     • ${task.title} (${task.priority}) - Due: ${new Date(task.dueDate).toLocaleString()}`);
         });
 
-        const success = await sendNotificationToUser(user, nearlyDueTasks);
+        const success = await sendNotificationToUser(user, tasks);
 
         if (success) {
           successCount++;
-          totalTasksNotified += nearlyDueTasks.length;
-          console.log(`  ✅ Notification sent\n`);
+          totalTasksNotified += tasks.length;
+          console.log(`  ✅ ${taskLabel} sent\n`);
         } else {
           console.log(`  ❌ Failed to send notification\n`);
         }
@@ -213,4 +235,5 @@ async function sendNotificationsToAllUsers() {
 }
 
 // Run the script
-sendNotificationsToAllUsers();
+const mode = process.argv[2] || 'nearly-due'; // 'nearly-due' or 'reminder'
+sendNotificationsToAllUsers(mode);
