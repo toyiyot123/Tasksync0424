@@ -31,6 +31,11 @@ const verifySecret = (req, res, next) => {
   next();
 };
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ message: 'TaskSync Notification Server', status: 'running', health: '/health' });
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ status: 'Server is running', timestamp: new Date().toISOString() });
