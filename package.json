@@ -5,10 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:server": "node server.js",
-    "dev:all": "npm run dev & npm run dev:server",
-    "notify-all-users": "node send-notifications-firebase.js nearly-due",
-    "notify-reminders": "node send-notifications-firebase.js reminder",
     "check-firebase-users": "node check-firebase-data.js",
     "add-test-tasks": "node add-test-tasks.js",
     "build": "vite build",
@@ -26,7 +22,6 @@
     "firebase-admin": "^13.7.0",
     "lucide-react": "^0.263.0",
     "node-cron": "^4.2.1",
-    "nodemailer": "^6.9.8",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "zustand": "^4.4.0"

@@ -121,31 +121,31 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
             <Zap className="w-5 h-5" />
             Analysis from {insights.totalRecords} historical task records • {insights.overallSuccessRate}% overall success rate
           </div>
-          <div className="flex flex-wrap gap-8 justify-between">
-            <div className="w-fit ml-8" data-tour="scheduler-best-hours">
-              <div className="flex items-center gap-2 text-green-700 font-semibold mb-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div data-tour="scheduler-best-hours">
+              <div className="flex items-center gap-2 text-green-700 font-semibold mb-4">
                 <TrendingUp className="w-4 h-4" />
                 Best Productivity Hours
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {insights.bestHours.map(({ hour, rate }) => (
-                  <div key={hour} className="flex items-center gap-4">
+                  <div key={hour} className="flex items-center justify-between text-sm">
                     <span className="text-gray-700">{formatHour(hour)} – {formatHour(hour + 1)}</span>
-                    <span className="font-semibold text-green-600">{rate}% success</span>
+                    <span className="font-semibold text-green-600 ml-2 whitespace-nowrap">{rate}% success</span>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="w-fit mr-8" data-tour="scheduler-lowest-hours">
-              <div className="flex items-center gap-2 text-red-600 font-semibold mb-3">
+            <div data-tour="scheduler-lowest-hours">
+              <div className="flex items-center gap-2 text-red-600 font-semibold mb-4">
                 <TrendingDown className="w-4 h-4" />
                 Lowest Productivity Hours
               </div>
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {insights.worstHours.map(({ hour, rate }) => (
-                  <div key={hour} className="flex items-center gap-4">
+                  <div key={hour} className="flex items-center justify-between text-sm">
                     <span className="text-gray-700">{formatHour(hour)} – {formatHour(hour + 1)}</span>
-                    <span className="font-semibold text-red-500">{rate}% success</span>
+                    <span className="font-semibold text-red-500 ml-2 whitespace-nowrap">{rate}% success</span>
                   </div>
                 ))}
               </div>

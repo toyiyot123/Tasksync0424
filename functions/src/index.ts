@@ -3,4 +3,4 @@
  * Exports all Cloud Functions for TaskSync
  */
 
-export { sendNearlyDueReminder, sendOverdueAlert } from './taskReminders';
+export { sendTaskReminder, sendNearlyDueReminder, sendOverdueAlert } from './taskReminders';

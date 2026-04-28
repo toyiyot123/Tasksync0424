@@ -28,8 +28,8 @@ function isDateOnlyTimestamp(date) {
 }
 
 async function main() {
-  console.log('🚀 Nearly-due notifications scan started');
-
+  const startTime = new Date().toISOString();
+  
   if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
     throw new Error('FIREBASE_SERVICE_ACCOUNT is not set');
   }
@@ -90,8 +90,6 @@ async function main() {
       });
 
     if (tasks.length === 0) continue;
-
-    console.log(`📧 Sending to ${user.email}: ${tasks.length} tasks`);
 
     const taskHtml = tasks.map(t => {
       const dueDate = t.due_at?.toDate ? t.due_at.toDate() : new Date(t.dueDate);
@@ -171,12 +169,12 @@ body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; line
     sent++;
   }
 
-  console.log(`✅ Scan complete. Sent ${sent} emails.`);
+  console.log(`[${new Date().toISOString()}] Completed: Sent ${sent} emails`);
   process.exit(0);
 }
 
 main().catch(err => {
-  console.error('❌ Error:', err);
+  console.error(`Error: ${err.message}`);
   process.exit(1);
 });
 

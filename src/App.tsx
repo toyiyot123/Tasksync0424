@@ -587,7 +587,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
         isOpen={sidebarOpen}
       />
       
-      <div className={`flex flex-col ${sidebarOpen ? 'ml-64' : 'ml-0'} lg:ml-64 h-full overflow-hidden`}>
+      <div className="flex flex-col lg:ml-64 h-full overflow-hidden">
         {/* Mobile top bar */}
         <div className="lg:hidden flex items-center gap-3 bg-white border-b border-gray-200 px-4 py-3">
           <button

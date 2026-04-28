@@ -44,7 +44,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: 'Configure Your AI Settings',
     message:
       'The "AI Schedule Reminder" popup has appeared! Click "Go to Settings" to configure your work schedule and AI behavior preferences. This setup is quick and essential for the AI to create an optimized schedule tailored to your productivity patterns.',
-    position: 'left',
+    position: 'bottom',
     highlightPadding: 6,
     page: 'dashboard',
   },
@@ -80,7 +80,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: 'Complete Your Setup',
     message:
       'Click the "AI Schedule" button again and when the reminder popup appears, click "Continue" to proceed. The AI will now use all your configured settings to create an intelligent schedule tailored to your productivity patterns.',
-    position: 'right',
+    position: 'bottom',
     highlightPadding: 6,
     page: 'dashboard',
   },
@@ -116,7 +116,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: 'AI Confidence Score',
     message:
       'This percentage shows how confident the AI is about its scheduling recommendation for each task. The higher the score (closer to 100%), the better the AI understands your patterns and preferences. As you use the system, these scores improve!',
-    position: 'left',
+    position: 'bottom',
     highlightPadding: 4,
     page: 'scheduler',
   },

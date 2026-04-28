@@ -1,302 +1,232 @@
-/**
- * Task Reminder Cloud Function
- * Sends scheduled email reminders for nearly-due and overdue tasks
- * 
- * Triggered by Cloud Scheduler (Cloud Tasks):
- * - 9:00 AM: Send nearly-due task reminders
- * - 5:00 PM: Send overdue task alerts
- */
-
-import * as functions from 'firebase-functions';
+import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
-import nodemailer from 'nodemailer';
 
-// Initialize Firebase Admin if not already done
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 
 const db = admin.firestore();
 
-/**
- * Configure Nodemailer transporter
- */
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASSWORD,
-  },
-});
+const EMAILJS_API_URL = 'https://api.emailjs.com/api/v1.0/email/send';
+const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || 'service_mjgbtih';
+const EMAILJS_NEARLY_DUE_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || 'template_4dxvv8d';
+const EMAILJS_OVERDUE_TEMPLATE_ID = process.env.EMAILJS_OVERDUE_TEMPLATE_ID || 'template_ztabchb';
+const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || '9Dw-9GkNwVvoLmb1q';
+const APP_LINK = process.env.FRONTEND_URL || 'https://tasksync-70aa9.web.app';
 
-/**
- * Format task for email display
- */
-function formatTaskForEmail(task: any) {
-  const dueDate = task.dueDate?.toDate?.() || new Date(task.dueDate);
-  const now = new Date();
-  const hoursUntilDue = Math.floor((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60));
-  
-  const priorityColor = task.priority === 'high' ? '#ef4444' : 
-                       task.priority === 'medium' ? '#f59e0b' : '#22c55e';
-  
-  return `
-    <tr style="border-bottom: 1px solid #e5e7eb;">
-      <td style="padding: 12px; text-align: left;">
-        <strong>${task.title}</strong><br/>
-        <small style="color: #666;">${task.description || ''}</small>
-      </td>
-      <td style="padding: 12px; text-align: center;">
-        <span style="background: ${priorityColor}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">
-          ${task.priority?.toUpperCase() || 'MEDIUM'}
-        </span>
-      </td>
-      <td style="padding: 12px; text-align: center; color: #666;">
-        ${dueDate.toLocaleDateString()} ${dueDate.toLocaleTimeString()}
-      </td>
-      <td style="padding: 12px; text-align: center; color: #666;">
-        ${hoursUntilDue > 0 ? hoursUntilDue + ' hours' : 'Overdue'}
-      </td>
-    </tr>
-  `;
+type TaskStatus = 'todo' | 'in-progress' | 'completed';
+
+type ScheduledTask = {
+  id: string;
+  title?: string;
+  description?: string;
+  dueDate?: admin.firestore.Timestamp | string | Date;
+  priority?: 'low' | 'medium' | 'high';
+  status?: TaskStatus;
+};
+
+type TaskUser = {
+  id: string;
+  email?: string;
+  displayName?: string;
+  name?: string;
+};
+
+function normalizeDueDate(dueDate: ScheduledTask['dueDate']): Date {
+  if (!dueDate) {
+    return new Date(0);
+  }
+
+  if (dueDate instanceof Date) {
+    return dueDate;
+  }
+
+  if (typeof dueDate === 'string') {
+    return new Date(dueDate);
+  }
+
+  return dueDate.toDate();
 }
 
-/**
- * Send nearly-due task reminder
- * Triggered daily at 9:00 AM
- */
+function formatDueHours(task: ScheduledTask, now: Date): string {
+  const dueDate = normalizeDueDate(task.dueDate);
+  const hoursUntilDue = Math.floor((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60));
+
+  if (!Number.isFinite(dueDate.getTime())) {
+    return 'N/A';
+  }
+
+  if (hoursUntilDue < 0) {
+    return `${Math.abs(hoursUntilDue)} overdue`;
+  }
+
+  return `${hoursUntilDue}`;
+}
+
+function formatDueDate(task: ScheduledTask): string {
+  const dueDate = normalizeDueDate(task.dueDate);
+
+  if (!Number.isFinite(dueDate.getTime())) {
+    return 'No due date';
+  }
+
+  return dueDate.toLocaleString();
+}
+
+function formatPriority(task: ScheduledTask): string {
+  return (task.priority || 'medium').toUpperCase();
+}
+
+async function sendEmailWithEmailJS(
+  toEmail: string,
+  toName: string,
+  subject: string,
+  tasks: ScheduledTask[],
+  templateId: string
+): Promise<void> {
+  // Build task list HTML table rows
+  const taskListHTML = tasks.map(task => {
+    const dueDate = formatDueDate(task);
+    const priority = formatPriority(task);
+    
+    return `<tr style="background-color: #ffffff;">
+<td style="padding: 16px; border-top: 1px solid #eeeeee;">
+<span class="mobile-label" style="display: none;">Task</span>
+<div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
+</td>
+<td style="padding: 16px; border-top: 1px solid #eeeeee;">
+<span class="mobile-label" style="display: none;">Priority</span>
+<span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
+</td>
+<td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555;">
+<span class="mobile-label" style="display: none;">Due</span>
+${dueDate}
+</td>
+</tr>`;
+  }).join('');
+
+  const payload = {
+    service_id: EMAILJS_SERVICE_ID,
+    template_id: templateId,
+    user_id: EMAILJS_PUBLIC_KEY,
+    template_params: {
+      to_email: toEmail,
+      to_name: toName,
+      subject,
+      user_name: toName,
+      task_count: String(tasks.length),
+      tasks_list: taskListHTML,
+      app_link: APP_LINK,
+    },
+  };
+
+  const response = await fetch(EMAILJS_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`EmailJS failed: ${response.status} ${details}`);
+  }
+}
+
+async function getUsers(): Promise<TaskUser[]> {
+  const usersSnapshot = await db.collection('users').get();
+  return usersSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() as Omit<TaskUser, 'id'>),
+  }));
+}
+
+async function getUserTasks(userId: string): Promise<ScheduledTask[]> {
+  const tasksSnapshot = await db.collection('users').doc(userId).collection('tasks').get();
+  return tasksSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() as Omit<ScheduledTask, 'id'>),
+  }));
+}
+
+async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: number; users: number; errors: number }> {
+  const users = await getUsers();
+  const now = new Date();
+  const oneHour = new Date(now.getTime() + 60 * 60 * 1000);
+  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+  let sent = 0;
+  let errors = 0;
+
+  for (const user of users) {
+    if (!user.email) {
+      continue;
+    }
+
+    try {
+      const allTasks = await getUserTasks(user.id);
+      const matchingTasks = allTasks.filter((task) => {
+        if (task.status === 'completed') {
+          return false;
+        }
+
+        const dueDate = normalizeDueDate(task.dueDate);
+        if (!Number.isFinite(dueDate.getTime())) {
+          return false;
+        }
+
+        if (mode === 'nearly-due') {
+          return dueDate >= now && dueDate <= tomorrow;
+        }
+
+        return dueDate < now;
+      });
+
+      if (matchingTasks.length === 0) {
+        continue;
+      }
+
+      const toName = user.displayName || user.name || 'TaskSync User';
+      const subject = mode === 'nearly-due'
+        ? `TaskSync Reminder: ${matchingTasks.length} task(s) due in 24 hours`
+        : `TaskSync Alert: ${matchingTasks.length} overdue task(s)`;
+      const templateId = mode === 'nearly-due'
+        ? EMAILJS_NEARLY_DUE_TEMPLATE_ID
+        : EMAILJS_OVERDUE_TEMPLATE_ID;
+
+      await sendEmailWithEmailJS(
+        user.email,
+        toName,
+        subject,
+        matchingTasks,
+        templateId
+      );
+      sent += matchingTasks.length;
+    } catch (error) {
+      errors += 1;
+      console.error(`Schedule ${mode} failed for user ${user.id}:`, error);
+    }
+  }
+
+  return { sent, users: users.length, errors };
+}
+
 export const sendNearlyDueReminder = functions.pubsub
-  .schedule('0 9 * * *') // 9:00 AM UTC every day
+  .schedule('0 9 * * *')
   .timeZone('UTC')
-  .onRun(async (context) => {
-    console.log('📧 Running scheduled nearly-due task reminder...');
-
-    try {
-      // Get all users
-      const usersSnapshot = await db.collection('users').get();
-      
-      if (usersSnapshot.empty) {
-        console.log('ℹ️ No users found');
-        return;
-      }
-
-      let successCount = 0;
-      let errorCount = 0;
-
-      // Process each user
-      for (const userDoc of usersSnapshot.docs) {
-        const user = userDoc.data();
-        const userId = userDoc.id;
-
-        try {
-          // Get user's tasks
-          const tasksSnapshot = await db
-            .collection('users')
-            .doc(userId)
-            .collection('tasks')
-            .where('status', '!=', 'completed')
-            .get();
-
-          if (tasksSnapshot.empty) {
-            console.log(`ℹ️ No tasks for user ${user.email}`);
-            continue;
-          }
-
-          // Filter nearly-due tasks (due within 24 hours)
-          const now = new Date();
-          const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-          
-          const nearlyDueTasks = tasksSnapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
-            .filter(task => {
-              const dueDate = task.dueDate?.toDate?.() || new Date(task.dueDate);
-              return dueDate >= now && dueDate <= tomorrow && task.status !== 'completed';
-            });
-
-          if (nearlyDueTasks.length === 0) {
-            console.log(`ℹ️ No nearly-due tasks for user ${user.email}`);
-            continue;
-          }
-
-          // Build email
-          const taskRows = nearlyDueTasks.map(task => formatTaskForEmail(task)).join('');
-          
-          const htmlContent = `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
-              <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
-                <h2 style="margin: 0; font-size: 24px;">📧 Task Reminders</h2>
-                <p style="margin: 8px 0 0 0; opacity: 0.9;">Tasks due within 24 hours</p>
-              </div>
-              
-              <div style="background: white; padding: 24px; border: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
-                <p>Hi <strong>${user.displayName || 'there'}</strong>,</p>
-                <p>You have <strong>${nearlyDueTasks.length}</strong> task(s) due within the next 24 hours.</p>
-                
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
-                  <thead>
-                    <tr style="background: #f3f4f6; font-weight: bold;">
-                      <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb;">Task</th>
-                      <th style="padding: 12px; text-align: center; border: 1px solid #e5e7eb;">Priority</th>
-                      <th style="padding: 12px; text-align: center; border: 1px solid #e5e7eb;">Due Date</th>
-                      <th style="padding: 12px; text-align: center; border: 1px solid #e5e7eb;">Time Left</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${taskRows}
-                  </tbody>
-                </table>
-                
-                <p style="text-align: center; margin-top: 24px;">
-                  <a href="${process.env.FRONTEND_URL || 'https://your-app.com'}" style="background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">
-                    View All Tasks
-                  </a>
-                </p>
-                
-                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
-                <p style="color: #666; font-size: 12px; text-align: center;">
-                  This is an automated reminder from TaskSync. You can manage notification preferences in your settings.
-                </p>
-              </div>
-            </div>
-          `;
-
-          // Send email
-          await transporter.sendMail({
-            from: process.env.SMTP_USER,
-            to: user.email,
-            subject: `⏰ Reminder: ${nearlyDueTasks.length} task(s) due in 24 hours`,
-            html: htmlContent,
-          });
-
-          console.log(`✅ Sent nearly-due reminder to ${user.email} (${nearlyDueTasks.length} tasks)`);
-          successCount++;
-        } catch (userError) {
-          console.error(`❌ Error processing user ${user.email}:`, userError);
-          errorCount++;
-        }
-      }
-
-      console.log(`📊 Nearly-due reminder: ${successCount} success, ${errorCount} errors`);
-    } catch (error) {
-      console.error('❌ Fatal error in nearly-due reminder:', error);
-      throw error;
-    }
+  .onRun(async () => {
+    const result = await processSchedule('nearly-due');
+    console.log(`sendNearlyDueReminder finished. sent=${result.sent} users=${result.users} errors=${result.errors}`);
+    return null;
   });
 
-/**
- * Send overdue task alert
- * Triggered daily at 5:00 PM
- */
 export const sendOverdueAlert = functions.pubsub
-  .schedule('0 17 * * *') // 5:00 PM UTC every day
+  .schedule('0 17 * * *')
   .timeZone('UTC')
-  .onRun(async (context) => {
-    console.log('📧 Running scheduled overdue task alert...');
-
-    try {
-      // Get all users
-      const usersSnapshot = await db.collection('users').get();
-      
-      if (usersSnapshot.empty) {
-        console.log('ℹ️ No users found');
-        return;
-      }
-
-      let successCount = 0;
-      let errorCount = 0;
-
-      // Process each user
-      for (const userDoc of usersSnapshot.docs) {
-        const user = userDoc.data();
-        const userId = userDoc.id;
-
-        try {
-          // Get user's tasks
-          const tasksSnapshot = await db
-            .collection('users')
-            .doc(userId)
-            .collection('tasks')
-            .where('status', '!=', 'completed')
-            .get();
-
-          if (tasksSnapshot.empty) {
-            continue;
-          }
-
-          // Filter overdue tasks
-          const now = new Date();
-          const overdueTasks = tasksSnapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() }))
-            .filter(task => {
-              const dueDate = task.dueDate?.toDate?.() || new Date(task.dueDate);
-              return dueDate < now && task.status !== 'completed';
-            });
-
-          if (overdueTasks.length === 0) {
-            continue;
-          }
-
-          // Build email
-          const taskRows = overdueTasks.map(task => formatTaskForEmail(task)).join('');
-          
-          const htmlContent = `
-            <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto;">
-              <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
-                <h2 style="margin: 0; font-size: 24px;">🚨 Overdue Tasks Alert</h2>
-                <p style="margin: 8px 0 0 0; opacity: 0.9;">You have overdue tasks that need attention</p>
-              </div>
-              
-              <div style="background: white; padding: 24px; border: 1px solid #e5e7eb; border-radius: 0 0 8px 8px;">
-                <p>Hi <strong>${user.displayName || 'there'}</strong>,</p>
-                <p>⚠️ You have <strong>${overdueTasks.length}</strong> overdue task(s) that need your attention.</p>
-                
-                <table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
-                  <thead>
-                    <tr style="background: #f3f4f6; font-weight: bold;">
-                      <th style="padding: 12px; text-align: left; border: 1px solid #e5e7eb;">Task</th>
-                      <th style="padding: 12px; text-align: center; border: 1px solid #e5e7eb;">Priority</th>
-                      <th style="padding: 12px; text-align: center; border: 1px solid #e5e7eb;">Due Date</th>
-                      <th style="padding: 12px; text-align: center; border: 1px solid #e5e7eb;">Days Overdue</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${taskRows}
-                  </tbody>
-                </table>
-                
-                <p style="text-align: center; margin-top: 24px;">
-                  <a href="${process.env.FRONTEND_URL || 'https://your-app.com'}" style="background: #f5576c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">
-                    View Overdue Tasks
-                  </a>
-                </p>
-                
-                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;">
-                <p style="color: #666; font-size: 12px; text-align: center;">
-                  This is an automated alert from TaskSync. You can manage notification preferences in your settings.
-                </p>
-              </div>
-            </div>
-          `;
-
-          // Send email
-          await transporter.sendMail({
-            from: process.env.SMTP_USER,
-            to: user.email,
-            subject: `🚨 Alert: ${overdueTasks.length} overdue task(s)`,
-            html: htmlContent,
-          });
-
-          console.log(`✅ Sent overdue alert to ${user.email} (${overdueTasks.length} tasks)`);
-          successCount++;
-        } catch (userError) {
-          console.error(`❌ Error processing user ${user.email}:`, userError);
-          errorCount++;
-        }
-      }
-
-      console.log(`📊 Overdue alert: ${successCount} success, ${errorCount} errors`);
-    } catch (error) {
-      console.error('❌ Fatal error in overdue alert:', error);
-      throw error;
-    }
+  .onRun(async () => {
+    const result = await processSchedule('overdue');
+    console.log(`sendOverdueAlert finished. sent=${result.sent} users=${result.users} errors=${result.errors}`);
+    return null;
   });
+
