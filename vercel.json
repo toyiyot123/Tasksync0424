@@ -1,8 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/notify",
+      "path": "/api/notify?mode=nearly-due",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/notify?mode=overdue",
+      "schedule": "0 17 * * *"
     }
   ]
 }
