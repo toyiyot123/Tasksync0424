@@ -125,12 +125,7 @@ body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; line
 }
 
 export default async function handler(req, res) {
-  // Verify cron secret
-  if (req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
-  console.log('🚀 Nearly-due notifications scan started');
+  console.log('🚀 Notification scan started for mode:', req.query.mode);
 
   try {
     db = initializeFirebase();
