@@ -129,7 +129,8 @@ async function getUsers() {
 }
 
 async function getUserTasks(userId) {
-  const tasksSnapshot = await db.collection('users').doc(userId).collection('tasks').get();
+  // Tasks are stored in root /tasks collection, filtered by user_id field
+  const tasksSnapshot = await db.collection('tasks').where('user_id', '==', userId).get();
   return tasksSnapshot.docs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
@@ -156,6 +157,10 @@ async function processNotifications(mode) {
 
     try {
       const allTasks = await getUserTasks(user.id);
+      // Get today's date at midnight for accurate date comparison
+      const todayAtMidnight = new Date();
+      todayAtMidnight.setHours(0, 0, 0, 0);
+
       const matchingTasks = allTasks.filter((task) => {
         if (task.status === 'completed') {
           return false;
@@ -170,7 +175,11 @@ async function processNotifications(mode) {
           return dueDate >= now && dueDate <= tomorrow;
         }
 
-        return dueDate < now;
+        // For overdue: compare only dates (not times)
+        // A task is overdue only if due date is BEFORE today (not today itself)
+        const dueDateAtMidnight = new Date(dueDate);
+        dueDateAtMidnight.setHours(0, 0, 0, 0);
+        return dueDateAtMidnight < todayAtMidnight;
       });
 
       if (matchingTasks.length === 0) {

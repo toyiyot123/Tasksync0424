@@ -14,14 +14,16 @@ const EMAILJS_OVERDUE_TEMPLATE_ID = process.env.EMAILJS_OVERDUE_TEMPLATE_ID || '
 const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || '9Dw-9GkNwVvoLmb1q';
 const APP_LINK = process.env.FRONTEND_URL || 'https://tasksync-70aa9.web.app';
 
-type TaskStatus = 'todo' | 'in-progress' | 'completed';
+type TaskStatus = 'todo' | 'in-progress' | 'completed' | 'overdue';
 
 type ScheduledTask = {
   id: string;
   title?: string;
   description?: string;
   dueDate?: admin.firestore.Timestamp | string | Date;
+  due_at?: admin.firestore.Timestamp | string | Date; // Support both field names
   priority?: 'low' | 'medium' | 'high';
+  priority_manual?: 'low' | 'medium' | 'high'; // Support both field names
   status?: TaskStatus;
 };
 
@@ -32,7 +34,7 @@ type TaskUser = {
   name?: string;
 };
 
-function normalizeDueDate(dueDate: ScheduledTask['dueDate']): Date {
+function normalizeDueDate(dueDate: ScheduledTask['dueDate'] | ScheduledTask['due_at']): Date {
   if (!dueDate) {
     return new Date(0);
   }
@@ -45,7 +47,11 @@ function normalizeDueDate(dueDate: ScheduledTask['dueDate']): Date {
     return new Date(dueDate);
   }
 
-  return dueDate.toDate();
+  if (dueDate.toDate && typeof dueDate.toDate === 'function') {
+    return dueDate.toDate();
+  }
+
+  return new Date(0);
 }
 
 function formatDueHours(task: ScheduledTask, now: Date): string {
@@ -180,7 +186,13 @@ async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: 
           return dueDate >= now && dueDate <= tomorrow;
         }
 
-        return dueDate < now;
+        // For overdue: compare only dates (not times)
+        // A task is overdue only if due date is BEFORE today (not today itself)
+        const todayAtMidnight = new Date();
+        todayAtMidnight.setHours(0, 0, 0, 0);
+        const dueDateAtMidnight = new Date(dueDate);
+        dueDateAtMidnight.setHours(0, 0, 0, 0);
+        return dueDateAtMidnight < todayAtMidnight;
       });
 
       if (matchingTasks.length === 0) {
@@ -228,5 +240,70 @@ export const sendOverdueAlert = functions.pubsub
     const result = await processSchedule('overdue');
     console.log(`sendOverdueAlert finished. sent=${result.sent} users=${result.users} errors=${result.errors}`);
     return null;
+  });
+
+/**
+ * Automatically update task status to 'overdue' if due date has passed
+ * Runs every hour to keep tasks in sync with current date/time
+ */
+export const updateOverdueTasksStatus = functions.pubsub
+  .schedule('0 * * * *')
+  .timeZone('UTC')
+  .onRun(async () => {
+    let updated = 0;
+    let errors = 0;
+    
+    try {
+      const users = await getUsers();
+      const now = new Date();
+
+      for (const user of users) {
+        try {
+          const allTasks = await getUserTasks(user.id);
+
+          for (const task of allTasks) {
+            // Skip if already completed or already overdue
+            if (task.status === 'completed' || task.status === 'overdue') {
+              continue;
+            }
+
+            // Handle both dueDate and due_at field names
+            const rawDueDate = task.dueDate || task.due_at;
+            const dueDate = normalizeDueDate(rawDueDate);
+
+            // Check if task is overdue (compare only dates, not times)
+            // A task is overdue only if due date is BEFORE today (not today itself)
+            const todayAtMidnight = new Date();
+            todayAtMidnight.setHours(0, 0, 0, 0);
+            const dueDateAtMidnight = new Date(dueDate);
+            dueDateAtMidnight.setHours(0, 0, 0, 0);
+            
+            if (Number.isFinite(dueDate.getTime()) && dueDateAtMidnight < todayAtMidnight) {
+              // Update task status to overdue
+              await db
+                .collection('users')
+                .doc(user.id)
+                .collection('tasks')
+                .doc(task.id)
+                .update({
+                  status: 'overdue',
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+
+              updated += 1;
+            }
+          }
+        } catch (error) {
+          errors += 1;
+          console.error(`Failed to update overdue tasks for user ${user.id}:`, error);
+        }
+      }
+
+      console.log(`updateOverdueTasksStatus finished. updated=${updated} errors=${errors}`);
+      return null;
+    } catch (error) {
+      console.error('updateOverdueTasksStatus failed:', error);
+      return null;
+    }
   });
 

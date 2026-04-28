@@ -99,14 +99,18 @@ export class TaskNotificationService {
    * Helper: Get overdue tasks
    */
   static getOverdueTasks(tasks: Task[]): Task[] {
-    const now = new Date();
+    const todayAtMidnight = new Date();
+    todayAtMidnight.setHours(0, 0, 0, 0);
 
     return tasks.filter(task => {
       if (task.status === 'completed') return false;
       if (!task.dueDate) return false;
       
       const dueDate = new Date(task.dueDate);
-      return dueDate < now;
+      const dueDateAtMidnight = new Date(dueDate);
+      dueDateAtMidnight.setHours(0, 0, 0, 0);
+      
+      return dueDateAtMidnight < todayAtMidnight;
     });
   }
 }

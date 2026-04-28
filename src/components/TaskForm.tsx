@@ -44,7 +44,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onSubmit, onClose, initialTask }) =
       title: '',
       description: '',
       priority: 'medium',
-      status: 'todo',
+      status: initialTask?.status || 'todo',
       category: fallbackCategory.name,
       categoryId: fallbackCategory.category_id,
       tags: [],

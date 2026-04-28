@@ -7,6 +7,7 @@
     "dev": "vite",
     "check-firebase-users": "node check-firebase-data.js",
     "add-test-tasks": "node add-test-tasks.js",
+    "deploy:functions": "firebase deploy --only functions",
     "build": "vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview"

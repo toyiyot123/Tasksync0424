@@ -8,6 +8,7 @@ import { TaskService } from '@/services/TaskService';
 import { TaskLogService } from '@/services/TaskLogService';
 import { UserPerformanceService } from '@/services/UserPerformanceService';
 import { PriorityScoreService } from '@/services/PriorityScoreService';
+import { OverdueTaskService } from '@/services/OverdueTaskService';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
@@ -170,6 +171,33 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     void TaskScheduleService.syncUserSchedules(user.uid, tasks, currentSchedule);
   }, [user, tasks, currentSchedule]);
 
+  // Periodic check for overdue tasks every 5 minutes
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const checkOverdueTasks = async () => {
+      try {
+        const state = useTaskStore.getState();
+        if (state.tasks.length > 0) {
+          const updated = await OverdueTaskService.updateOverdueTasksFromAppState(user.uid, state.tasks);
+          if (updated > 0) {
+            console.log(`[Periodic Check] Updated ${updated} tasks to overdue status`);
+          }
+        }
+      } catch (error) {
+        console.error('[Periodic Check] Error checking overdue tasks:', error);
+      }
+    };
+
+    // Run check immediately on mount, then every 5 minutes
+    checkOverdueTasks();
+    const interval = setInterval(checkOverdueTasks, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(interval);
+  }, [user]);
+
   const mergeCategory = (category: TaskCategory | null) => {
     if (!category) {
       return;
@@ -224,7 +252,9 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
             await UserPerformanceService.createUserPerformance(firebaseUser.uid);
           }
 
-          // Load user's tasks from Firestore using TaskService
+          // ===== IMPORTANT: Update overdue task statuses BEFORE loading tasks =====
+          console.log('[App] Updating overdue task statuses...');
+          // Load user's tasks from Firestore
           const firestoreTasks = await TaskService.getUserTasks(firebaseUser.uid);
           // Filter out soft-deleted tasks (those with deleted_at timestamp)
           const activeTasks = firestoreTasks.filter(task => !task.deleted_at);
@@ -242,6 +272,97 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           
           setTasks(tasksWithMetadata.length > 0 ? tasksWithMetadata : []);
           setCurrentSchedule(scheduleMap);
+
+          // ===== NOW Update overdue task statuses (after tasks are loaded) =====
+          console.log('[App] Updating overdue task statuses...');
+          try {
+            const updated = await OverdueTaskService.updateOverdueTasksFromAppState(firebaseUser.uid, tasksWithMetadata);
+            console.log(`[App] OverdueTaskService completed: ${updated} tasks updated`);
+            
+            // Expose global functions for console debugging
+            const userId = firebaseUser.uid;
+            (window as any).updateOverdueTasksNow = async () => {
+              console.log('[Console] Manually triggering OverdueTaskService...');
+              // Get latest tasks from store
+              const state = useTaskStore.getState();
+              // Pass user email from Firebase Auth as fallback
+              return OverdueTaskService.updateOverdueTasksFromAppState(userId, state.tasks, firebaseUser.email || undefined);
+            };
+            
+            (window as any).updateTaskToOverdue = async (taskId: string) => {
+              console.log(`[Console] Manually updating task ${taskId} to overdue...`);
+              return OverdueTaskService.updateTaskToOverdue(userId, taskId);
+            };
+
+            // Diagnostic function to debug overdue tasks
+            (window as any).debugOverdueTasks = () => {
+              const state = useTaskStore.getState();
+              const now = new Date();
+              const todayAtMidnight = new Date();
+              todayAtMidnight.setHours(0, 0, 0, 0);
+              
+              console.log('\n🔍 DEBUG: Overdue Tasks Analysis');
+              console.log(`Current time: ${now.toISOString()}`);
+              console.log(`Today's date (for comparison): ${todayAtMidnight.toISOString()}`);
+              console.log(`Total tasks in store: ${state.tasks.length}`);
+              console.log('─'.repeat(60));
+              
+              state.tasks.forEach((task, index) => {
+                const dueDate = task.dueDate || (task as any).due_at;
+                const parsedDueDate = dueDate ? new Date(dueDate) : null;
+                const parsedDateAtMidnight = parsedDueDate ? new Date(parsedDueDate) : null;
+                if (parsedDateAtMidnight) {
+                  parsedDateAtMidnight.setHours(0, 0, 0, 0);
+                }
+                const isOverdue = parsedDateAtMidnight && parsedDateAtMidnight < todayAtMidnight;
+                
+                console.log(`\n[${index + 1}] "${task.title}"`);
+                console.log(`  Status: ${task.status}`);
+                console.log(`  Due Date: ${dueDate ? dueDate : 'No due date'}`);
+                console.log(`  Parsed: ${parsedDueDate ? parsedDueDate.toISOString() : 'Invalid'}`);
+                console.log(`  Parsed at midnight: ${parsedDateAtMidnight ? parsedDateAtMidnight.toISOString() : 'Invalid'}`);
+                console.log(`  Overdue: ${isOverdue ? '✅ YES' : '❌ NO'}`);
+              });
+              
+              console.log('\n' + '─'.repeat(60));
+              const overdueCount = state.tasks.filter(t => {
+                const dueDate = new Date(t.dueDate || (t as any).due_at);
+                const dueDateAtMidnight = new Date(dueDate);
+                dueDateAtMidnight.setHours(0, 0, 0, 0);
+                return Number.isFinite(dueDate.getTime()) && dueDateAtMidnight < todayAtMidnight && t.status !== 'completed';
+              }).length;
+              console.log(`Total overdue tasks: ${overdueCount}`);
+            };
+
+            // Get user email for debugging
+            (window as any).debugUserInfo = () => {
+              console.log('\n🔍 DEBUG: User Info');
+              console.log(`User ID: ${userId}`);
+              console.log(`User Email (Firebase Auth): ${firebaseUser.email || 'Not set'}`);
+              console.log(`Display Name: ${firebaseUser.displayName || 'Not set'}`);
+              
+              // Also show what's stored in Firestore
+              const userDoc = doc(db, 'users', userId);
+              getDoc(userDoc).then(snap => {
+                if (snap.exists()) {
+                  console.log('\n📄 Firestore User Document Data:');
+                  const data = snap.data();
+                  console.log(JSON.stringify(data, null, 2));
+                } else {
+                  console.warn('⚠️ User document not found in Firestore');
+                }
+              });
+            };
+            
+            // Log these for user reference
+            console.log('📝 Available console commands:');
+            console.log('   updateOverdueTasksNow() - Check all tasks and update overdue ones');
+            console.log('   updateTaskToOverdue(taskId) - Manually mark a specific task as overdue');
+            console.log('   debugOverdueTasks() - Show detailed info about all tasks and due dates');
+            console.log('   debugUserInfo() - Show user email and other info');
+          } catch (error) {
+            console.error('[App] Error in OverdueTaskService:', error);
+          }
 
           // Restore persisted AI schedule so it survives logout / page refresh
           const persistedSchedule = await loadAIScheduleFromFirestore(firebaseUser.uid);
@@ -356,7 +477,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
         const firestoreTaskId = await TaskService.createTask(user.uid, {
           title: taskData.title || '',
           description: taskData.description || '',
-          status: taskData.status || 'todo',
+          status: 'todo',
           priority_manual: taskData.priority || 'medium',
           due_at: Timestamp.fromDate(new Date(taskData.dueDate || new Date())),
           category_id: normalizedCategoryId,
@@ -372,7 +493,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           createdByEmail: user?.email || '',
           dueDate: taskData.dueDate || new Date(),
           priority: taskData.priority || 'medium',
-          status: taskData.status || 'todo',
+          status: 'todo',
           category: normalizedCategoryName,
           categoryId: normalizedCategoryId,
           tags: taskData.tags || [],

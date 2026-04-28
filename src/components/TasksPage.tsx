@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Task, TaskCategory } from '@/types';
-import { CalendarDays, CheckCircle2, Clock3, ListTodo, Plus, Search, Play, Clock } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Clock3, ListTodo, Plus, Search, Play, Clock, AlertTriangle } from 'lucide-react';
 import { formatDate, isOverdue } from '@/utils/taskUtils';
 
 const DEFAULT_CATEGORY_NAMES = ['Work', 'Personal', 'Health', 'Academics', 'Other'];
@@ -254,9 +254,12 @@ const TasksPage: React.FC<TasksPageProps> = ({
               {task.description && <p className="mt-1 text-lg text-slate-500">{task.description}</p>}
 
               <div className="mt-3 flex flex-wrap items-center gap-4 text-sm text-slate-500">
-                <span className="flex items-center gap-1.5">
+                <span className={`flex items-center gap-1.5 ${task.status !== 'completed' && isOverdue(task.dueDate) ? 'text-red-600 font-semibold' : ''}`}>
                   <CalendarDays className="h-4 w-4" />
                   {formatDate(task.dueDate)}
+                  {task.status !== 'completed' && isOverdue(task.dueDate) && (
+                    <AlertTriangle className="h-4 w-4 text-red-600" title="This task is overdue" />
+                  )}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Clock3 className="h-4 w-4" />

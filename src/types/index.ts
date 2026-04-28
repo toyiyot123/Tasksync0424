@@ -29,7 +29,7 @@ export interface Task {
   createdByEmail?: string;
   dueDate: Date;
   priority: 'low' | 'medium' | 'high';
-  status: 'todo' | 'in-progress' | 'completed';
+  status: 'todo' | 'in-progress' | 'completed' | 'overdue';
   category: string;
   categoryId?: string;
   tags: string[];
