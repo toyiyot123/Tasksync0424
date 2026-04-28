@@ -141,6 +141,7 @@ async function processNotifications(mode) {
   const EMAILJS_OVERDUE_TEMPLATE_ID = process.env.EMAILJS_OVERDUE_TEMPLATE_ID || 'template_ztabchb';
 
   const users = await getUsers();
+  console.log(`📊 Found ${users.length} total users in Firestore`);
   const now = new Date();
   const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
@@ -149,6 +150,7 @@ async function processNotifications(mode) {
 
   for (const user of users) {
     if (!user.email) {
+      console.log(`⚠️ User ${user.id} has no email field, skipping...`);
       continue;
     }
 
