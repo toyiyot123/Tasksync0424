@@ -9,6 +9,7 @@ import { TaskLogService } from '@/services/TaskLogService';
 import { UserPerformanceService } from '@/services/UserPerformanceService';
 import { PriorityScoreService } from '@/services/PriorityScoreService';
 import { OverdueTaskService } from '@/services/OverdueTaskService';
+import { NearlyDueTaskService } from '@/services/NearlyDueTaskService';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
@@ -198,6 +199,36 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     return () => clearInterval(interval);
   }, [user]);
 
+  // Periodic check for nearly-due tasks every 5 minutes (same as overdue)
+  useEffect(() => {
+    if (!user) {
+      return;
+    }
+
+    const checkNearlyDueTasks = async () => {
+      try {
+        const state = useTaskStore.getState();
+        if (state.tasks.length > 0) {
+          // Get Firebase user for email fallback
+          const firebaseUser = auth.currentUser;
+          const userEmail = firebaseUser?.email || undefined;
+          const found = await NearlyDueTaskService.checkNearlyDueTasksFromAppState(user.uid, state.tasks, userEmail);
+          if (found > 0) {
+            console.log(`[Periodic Check] Found ${found} nearly-due tasks`);
+          }
+        }
+      } catch (error) {
+        console.error('[Periodic Check] Error checking nearly-due tasks:', error);
+      }
+    };
+
+    // Run check immediately on mount, then every 5 minutes
+    checkNearlyDueTasks();
+    const interval = setInterval(checkNearlyDueTasks, 5 * 60 * 1000); // 5 minutes
+
+    return () => clearInterval(interval);
+  }, [user]);
+
   const mergeCategory = (category: TaskCategory | null) => {
     if (!category) {
       return;
@@ -362,6 +393,90 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
             console.log('   debugUserInfo() - Show user email and other info');
           } catch (error) {
             console.error('[App] Error in OverdueTaskService:', error);
+          }
+
+          // ===== Check for nearly-due tasks (tasks due in 1 day) =====
+          console.log('[App] Checking nearly-due tasks...');
+          try {
+            const found = await NearlyDueTaskService.checkNearlyDueTasksFromAppState(firebaseUser.uid, tasksWithMetadata, firebaseUser.email || undefined);
+            console.log(`[App] NearlyDueTaskService completed: ${found} tasks nearly due`);
+            
+            // Expose global functions for console debugging
+            const userId = firebaseUser.uid;
+            (window as any).checkNearlyDueTasksNow = async () => {
+              console.log('[Console] Manually triggering NearlyDueTaskService...');
+              // Get latest tasks from store
+              const state = useTaskStore.getState();
+              // Pass user email from Firebase Auth as fallback
+              return NearlyDueTaskService.checkNearlyDueTasksFromAppState(userId, state.tasks, firebaseUser.email || undefined);
+            };
+
+            // Diagnostic function to debug nearly-due tasks
+            (window as any).debugNearlyDueTasks = () => {
+              const state = useTaskStore.getState();
+              const now = new Date();
+              const todayAtMidnight = new Date();
+              todayAtMidnight.setHours(0, 0, 0, 0);
+              
+              const tomorrowAtMidnight = new Date(todayAtMidnight);
+              tomorrowAtMidnight.setDate(tomorrowAtMidnight.getDate() + 1);
+              
+              const dayAfterTomorrowAtMidnight = new Date(tomorrowAtMidnight);
+              dayAfterTomorrowAtMidnight.setDate(dayAfterTomorrowAtMidnight.getDate() + 1);
+              
+              console.log('\n🔍 DEBUG: Nearly-Due Tasks Analysis');
+              console.log(`Current time: ${now.toISOString()}`);
+              console.log(`Today's date (for comparison): ${todayAtMidnight.toISOString()}`);
+              console.log(`Tomorrow's date: ${tomorrowAtMidnight.toISOString()}`);
+              console.log(`Day after tomorrow: ${dayAfterTomorrowAtMidnight.toISOString()}`);
+              console.log(`Total tasks in store: ${state.tasks.length}`);
+              console.log('─'.repeat(60));
+              
+              state.tasks.forEach((task, index) => {
+                const dueDate = task.dueDate || (task as any).due_at;
+                const parsedDueDate = dueDate ? new Date(dueDate) : null;
+                const parsedDateAtMidnight = parsedDueDate ? new Date(parsedDueDate) : null;
+                if (parsedDateAtMidnight) {
+                  parsedDateAtMidnight.setHours(0, 0, 0, 0);
+                }
+                const isNearlyDue = parsedDateAtMidnight && 
+                                   parsedDateAtMidnight >= tomorrowAtMidnight && 
+                                   parsedDateAtMidnight < dayAfterTomorrowAtMidnight;
+                
+                console.log(`\n[${index + 1}] "${task.title}"`);
+                console.log(`  Status: ${task.status}`);
+                console.log(`  Due Date: ${dueDate ? dueDate : 'No due date'}`);
+                console.log(`  Parsed: ${parsedDueDate ? parsedDueDate.toISOString() : 'Invalid'}`);
+                console.log(`  Parsed at midnight: ${parsedDateAtMidnight ? parsedDateAtMidnight.toISOString() : 'Invalid'}`);
+                console.log(`  Nearly Due (due tomorrow): ${isNearlyDue ? '✅ YES' : '❌ NO'}`);
+              });
+              
+              console.log('\n' + '─'.repeat(60));
+              const nearlyDueCount = state.tasks.filter(t => {
+                const dueDate = new Date(t.dueDate || (t as any).due_at);
+                const dueDateAtMidnight = new Date(dueDate);
+                dueDateAtMidnight.setHours(0, 0, 0, 0);
+                return Number.isFinite(dueDate.getTime()) && 
+                       dueDateAtMidnight >= tomorrowAtMidnight && 
+                       dueDateAtMidnight < dayAfterTomorrowAtMidnight && 
+                       t.status !== 'completed';
+              }).length;
+              console.log(`Total nearly-due tasks: ${nearlyDueCount}`);
+            };
+
+            // Reset notified tasks for testing
+            (window as any).debugResetNearlyDueNotified = () => {
+              console.log('[Console] Resetting nearly-due notification tracker...');
+              NearlyDueTaskService.debugResetNotified();
+            };
+            
+            // Log these for user reference
+            console.log('📝 Additional console commands:');
+            console.log('   checkNearlyDueTasksNow() - Check all tasks and send nearly-due notifications');
+            console.log('   debugNearlyDueTasks() - Show detailed info about nearly-due tasks');
+            console.log('   debugResetNearlyDueNotified() - Reset notification tracker for testing');
+          } catch (error) {
+            console.error('[App] Error in NearlyDueTaskService:', error);
           }
 
           // Restore persisted AI schedule so it survives logout / page refresh

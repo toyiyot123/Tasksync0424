@@ -71,25 +71,27 @@ async function sendEmailWithEmailJS(
   const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || '9Dw-9GkNwVvoLmb1q';
   const APP_LINK = process.env.FRONTEND_URL || 'https://tasksync-70aa9.web.app';
 
-  const taskListHTML = tasks.map(task => {
+  const taskRows = tasks.map(task => {
     const dueDate = formatDueDate(task);
     const priority = formatPriority(task);
     
     return `<tr style="background-color: #ffffff;">
-<td style="padding: 16px; border-top: 1px solid #eeeeee;">
-<span class="mobile-label" style="display: none;">Task</span>
-<div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
-</td>
-<td style="padding: 16px; border-top: 1px solid #eeeeee;">
-<span class="mobile-label" style="display: none;">Priority</span>
-<span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
-</td>
-<td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555;">
-<span class="mobile-label" style="display: none;">Due</span>
-${dueDate}
-</td>
-</tr>`;
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 58%; vertical-align: top;">
+        <span class="mobile-label" style="display: none;">Task</span>
+        <div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
+      </td>
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 21%; vertical-align: top;">
+        <span class="mobile-label" style="display: none;">Priority</span>
+        <span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
+      </td>
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555; width: 21%; vertical-align: top;">
+        <span class="mobile-label" style="display: none;">Due</span>
+        ${dueDate}
+      </td>
+    </tr>`;
   }).join('');
+
+  const taskListHTML = `<tbody>${taskRows}</tbody>`;
 
   const payload = {
     service_id: EMAILJS_SERVICE_ID,
@@ -97,9 +99,8 @@ ${dueDate}
     user_id: EMAILJS_PUBLIC_KEY,
     template_params: {
       to_email: toEmail,
-      to_name: toName,
-      subject,
       user_name: toName,
+      subject: subject,
       task_count: String(tasks.length),
       tasks_list: taskListHTML,
       app_link: APP_LINK,
@@ -172,7 +173,21 @@ async function processNotifications(mode) {
         }
 
         if (mode === 'nearly-due') {
-          return dueDate >= now && dueDate <= tomorrow;
+          // For nearly-due: check if task is due EXACTLY 1 day from today (not today, not 2+ days)
+          // Get tomorrow's date at midnight
+          const tomorrowAtMidnight = new Date(todayAtMidnight);
+          tomorrowAtMidnight.setDate(tomorrowAtMidnight.getDate() + 1);
+          
+          // Get day after tomorrow at midnight
+          const dayAfterTomorrowAtMidnight = new Date(tomorrowAtMidnight);
+          dayAfterTomorrowAtMidnight.setDate(dayAfterTomorrowAtMidnight.getDate() + 1);
+          
+          // Convert task due date to midnight for comparison
+          const dueDateAtMidnight = new Date(dueDate);
+          dueDateAtMidnight.setHours(0, 0, 0, 0);
+          
+          // Include only if due date is tomorrow (not today, not 2+ days away)
+          return dueDateAtMidnight >= tomorrowAtMidnight && dueDateAtMidnight < dayAfterTomorrowAtMidnight;
         }
 
         // For overdue: compare only dates (not times)

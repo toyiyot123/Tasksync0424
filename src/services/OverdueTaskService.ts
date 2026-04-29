@@ -31,6 +31,15 @@ function normalizeDueDate(dueDate: any): Date {
   return new Date(0);
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
  * Send overdue notification via EmailJS
  */
@@ -59,7 +68,8 @@ async function sendOverdueNotificationEmail(
     console.log(`  Service ID: ${EMAILJS_SERVICE_ID}`);
     console.log(`  Template ID: ${EMAILJS_TEMPLATE_ID}`);
 
-    const taskListHTML = overdueTasks.map(task => {
+    // Build complete table structure including headers
+    const taskRows = overdueTasks.map(task => {
       const dueDate = task.dueDate
         ? new Date(task.dueDate).toLocaleDateString('en-US', {
             month: 'long',
@@ -67,16 +77,19 @@ async function sendOverdueNotificationEmail(
             year: 'numeric'
           })
         : 'No due date';
-      const priority = (task.priority || task.priority_manual || 'medium').toUpperCase();
-      // Format as proper HTML table rows with better escaping handling
-      return `
-        <tr>
-          <td style="padding: 12px; border: 1px solid #ddd;">${task.title || 'Untitled'}</td>
-          <td style="padding: 12px; border: 1px solid #ddd;">${priority}</td>
-          <td style="padding: 12px; border: 1px solid #ddd;">${dueDate}</td>
-        </tr>
-      `;
+      const priorityValue = (task.priority || (task as any).priority_manual || 'medium') as string;
+      const priority = escapeHtml(priorityValue.toUpperCase());
+      const title = escapeHtml(task.title || 'Untitled');
+      const dueDateText = escapeHtml(dueDate);
+
+      return `<tr>
+        <td style="padding: 12px; border: 1px solid #ddd;">${title}</td>
+        <td style="padding: 12px; border: 1px solid #ddd;">${priority}</td>
+        <td style="padding: 12px; border: 1px solid #ddd;">${dueDateText}</td>
+      </tr>`;
     }).join('');
+
+    const taskListHTML = taskRows;
 
     console.log(`[OverdueTaskService] Sending email request to EmailJS...`);
     console.log(`  to_email param: ${userEmail}`);

@@ -54,21 +54,6 @@ function normalizeDueDate(dueDate: ScheduledTask['dueDate'] | ScheduledTask['due
   return new Date(0);
 }
 
-function formatDueHours(task: ScheduledTask, now: Date): string {
-  const dueDate = normalizeDueDate(task.dueDate);
-  const hoursUntilDue = Math.floor((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60));
-
-  if (!Number.isFinite(dueDate.getTime())) {
-    return 'N/A';
-  }
-
-  if (hoursUntilDue < 0) {
-    return `${Math.abs(hoursUntilDue)} overdue`;
-  }
-
-  return `${hoursUntilDue}`;
-}
-
 function formatDueDate(task: ScheduledTask): string {
   const dueDate = normalizeDueDate(task.dueDate);
 
@@ -90,26 +75,28 @@ async function sendEmailWithEmailJS(
   tasks: ScheduledTask[],
   templateId: string
 ): Promise<void> {
-  // Build task list HTML table rows
-  const taskListHTML = tasks.map(task => {
+  // Build task table HTML with header row for consistent layout
+  const taskRows = tasks.map(task => {
     const dueDate = formatDueDate(task);
     const priority = formatPriority(task);
     
     return `<tr style="background-color: #ffffff;">
-<td style="padding: 16px; border-top: 1px solid #eeeeee;">
-<span class="mobile-label" style="display: none;">Task</span>
-<div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
-</td>
-<td style="padding: 16px; border-top: 1px solid #eeeeee;">
-<span class="mobile-label" style="display: none;">Priority</span>
-<span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
-</td>
-<td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555;">
-<span class="mobile-label" style="display: none;">Due</span>
-${dueDate}
-</td>
-</tr>`;
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 58%; vertical-align: top;">
+        <span class="mobile-label" style="display: none;">Task</span>
+        <div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
+      </td>
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 21%; vertical-align: top;">
+        <span class="mobile-label" style="display: none;">Priority</span>
+        <span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
+      </td>
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555; width: 21%; vertical-align: top;">
+        <span class="mobile-label" style="display: none;">Due</span>
+        ${dueDate}
+      </td>
+    </tr>`;
   }).join('');
+
+  const taskListHTML = `<tbody>${taskRows}</tbody>`;
 
   const payload = {
     service_id: EMAILJS_SERVICE_ID,
@@ -117,9 +104,8 @@ ${dueDate}
     user_id: EMAILJS_PUBLIC_KEY,
     template_params: {
       to_email: toEmail,
-      to_name: toName,
-      subject,
       user_name: toName,
+      subject: subject,
       task_count: String(tasks.length),
       tasks_list: taskListHTML,
       app_link: APP_LINK,
@@ -159,8 +145,8 @@ async function getUserTasks(userId: string): Promise<ScheduledTask[]> {
 async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: number; users: number; errors: number }> {
   const users = await getUsers();
   const now = new Date();
-  const oneHour = new Date(now.getTime() + 60 * 60 * 1000);
-  const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const todayAtMidnight = new Date();
+  todayAtMidnight.setHours(0, 0, 0, 0);
 
   let sent = 0;
   let errors = 0;
@@ -172,6 +158,7 @@ async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: 
 
     try {
       const allTasks = await getUserTasks(user.id);
+      
       const matchingTasks = allTasks.filter((task) => {
         if (task.status === 'completed') {
           return false;
@@ -183,13 +170,25 @@ async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: 
         }
 
         if (mode === 'nearly-due') {
-          return dueDate >= now && dueDate <= tomorrow;
+          // For nearly-due: check if task is due EXACTLY 1 day from today (not today, not 2+ days)
+          // Get tomorrow's date at midnight
+          const tomorrowAtMidnight = new Date(todayAtMidnight);
+          tomorrowAtMidnight.setDate(tomorrowAtMidnight.getDate() + 1);
+          
+          // Get day after tomorrow at midnight
+          const dayAfterTomorrowAtMidnight = new Date(tomorrowAtMidnight);
+          dayAfterTomorrowAtMidnight.setDate(dayAfterTomorrowAtMidnight.getDate() + 1);
+          
+          // Convert task due date to midnight for comparison
+          const dueDateAtMidnight = new Date(dueDate);
+          dueDateAtMidnight.setHours(0, 0, 0, 0);
+          
+          // Include only if due date is tomorrow (not today, not 2+ days away)
+          return dueDateAtMidnight >= tomorrowAtMidnight && dueDateAtMidnight < dayAfterTomorrowAtMidnight;
         }
 
         // For overdue: compare only dates (not times)
         // A task is overdue only if due date is BEFORE today (not today itself)
-        const todayAtMidnight = new Date();
-        todayAtMidnight.setHours(0, 0, 0, 0);
         const dueDateAtMidnight = new Date(dueDate);
         dueDateAtMidnight.setHours(0, 0, 0, 0);
         return dueDateAtMidnight < todayAtMidnight;

@@ -12,9 +12,15 @@
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "functions/**",
+      "src/**"
     ],
     "rewrites": [
+      {
+        "source": "/api/**",
+        "destination": "https://task-sync0418-master.vercel.app/"
+      },
       {
         "source": "**",
         "destination": "/index.html"
