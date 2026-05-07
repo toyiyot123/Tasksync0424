@@ -9,6 +9,7 @@ export interface TutorialStep {
   position?: 'top' | 'bottom' | 'left' | 'right' | 'center';
   highlightPadding?: number;
   page?: string;
+  canAdvance?: () => boolean; // Optional validation function to check if user can proceed
 }
 
 interface TutorialStore {

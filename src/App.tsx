@@ -14,6 +14,7 @@ import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
 import { generateAISchedule, AIScheduleResult, NotEnoughHistoryError, saveAIScheduleToFirestore, loadAIScheduleFromFirestore } from '@/services/AIScheduleService';
+import { generateMockAISchedule } from '@/services/MockAIScheduleService';
 import { DQLSchedulerModel } from '@/services/DQLModel';
 import LoginPage from '@/components/LoginPage';
 import Sidebar from '@/components/Sidebar';
@@ -30,7 +31,7 @@ import SettingsPage from '@/components/SettingsPage';
 import AnalyticsPage from '@/components/AnalyticsPage';
 import GuidedPathTutorial from '@/components/GuidedPathTutorial';
 import { useTutorialStore } from '@/store/tutorialStore';
-import { TOUR_STEPS } from '@/config/tourSteps';
+import { TOUR_STEPS, EXISTING_USER_TOUR_STEPS } from '@/config/tourSteps';
 import './App.css';
 
 type FilterType = 'all' | 'todo' | 'in-progress' | 'completed' | 'overdue';
@@ -87,6 +88,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [aiScheduleResult, setAIScheduleResult] = useState<AIScheduleResult | null>(null);
+  const [showAIScheduleModal, setShowAIScheduleModal] = useState(false);
   const [schedulingLoading, setSchedulingLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [showScheduleReminder, setShowScheduleReminder] = useState(false);
@@ -108,6 +110,16 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   // Prevents saving empty state before remote tasks finish loading.
   const tasksReadyRef = useRef(false);
+  // Track whether user had tasks when tutorial started (to avoid clearing existing user tasks)
+  const tutorialStartedWithTasksRef = useRef(false);
+  // Track whether we've already handled this tutorial completion to avoid duplicate clearing
+  const tutorialCompletionHandledRef = useRef(false);
+  // Store existing user's tasks to preserve them during tutorial
+  const existingUserTasksRef = useRef<Task[]>([]);
+  // Track whether we've shown AI schedule modal for this session (only show once per login/reload)
+  const showAIScheduleModalRef = useRef(false);
+  // Track whether we've already triggered auto-start tutorial for this session (only once for new users)
+  const autoStartTutorialTriggeredRef = useRef(false);
 
   // Set up tutorial page navigator
   useEffect(() => {
@@ -116,6 +128,56 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       setActiveTab(page as any);
     });
   }, []);
+
+  // Auto-start tutorial for first-time users only
+  useEffect(() => {
+    if (!authLoading && user && tasksReadyRef.current) {
+      // Only trigger auto-start once per user session
+      if (autoStartTutorialTriggeredRef.current) {
+        return;
+      }
+      
+      // Get current tutorial state
+      const { hasCompletedTutorial, isActive, startTutorial } = useTutorialStore.getState();
+      
+      // For new users (no tasks) who haven't done tutorial before and it's not active
+      if (tasks.length === 0 && !hasCompletedTutorial && !isActive) {
+        autoStartTutorialTriggeredRef.current = true; // Mark that we've triggered auto-start
+        tutorialStartedWithTasksRef.current = false; // New user starting tutorial
+        tutorialCompletionHandledRef.current = false; // Reset completion flag
+        startTutorial(TOUR_STEPS);
+      }
+    }
+  }, [authLoading, user, tasks.length]);
+
+  // Function to restart tutorial for existing users
+  const restartTutorial = () => {
+    const { isActive, startTutorial } = useTutorialStore.getState();
+    if (!isActive) {
+      // Track whether user has tasks when restarting tutorial
+      const hasExistingTasks = tasks.length > 0;
+      tutorialStartedWithTasksRef.current = hasExistingTasks;
+      tutorialCompletionHandledRef.current = false; // Reset completion flag for new tutorial session
+      
+      // PRESERVE existing user tasks by storing them
+      if (hasExistingTasks) {
+        existingUserTasksRef.current = [...tasks];
+      } else {
+        existingUserTasksRef.current = [];
+      }
+      
+      // If user has tasks, use existing user tour, otherwise use full tour
+      const tourSteps = hasExistingTasks ? EXISTING_USER_TOUR_STEPS : TOUR_STEPS;
+      startTutorial(tourSteps);
+    }
+  };
+
+  // Expose restart tutorial function globally for use in other components
+  useEffect(() => {
+    const tutorialStore = useTutorialStore.getState();
+    (window as any).restartTutorial = restartTutorial;
+  }, [tasks.length]);
+
 
   // Show reminder modal when tutorial reaches Step 4 or Step 7
   useEffect(() => {
@@ -139,6 +201,157 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     
     return () => unsubscribe();
   }, []);
+
+  // Auto-open task form when tutorial reaches Step 3 (task-form-creation)
+  useEffect(() => {
+    const handleTutorialFormChange = () => {
+      const { isActive, currentStepIndex, steps } = useTutorialStore.getState();
+      const currentStep = steps[currentStepIndex];
+      
+      // Show form on Step 3 (task-form-creation) and keep it open until 6 tasks are created
+      if (isActive && currentStep?.id === 'task-form-creation') {
+        setShowForm(true);
+      } else {
+        setShowForm(false);
+      }
+    };
+
+    // Subscribe to tutorial store changes
+    const unsubscribe = useTutorialStore.subscribe(handleTutorialFormChange);
+    
+    // Check on mount
+    handleTutorialFormChange();
+    
+    return () => unsubscribe();
+  }, []);
+
+  // DURING TUTORIAL: Show mock AI schedule when tutorial reaches Step 9
+  // AFTER TUTORIAL: Mock schedule is cleared by separate effect below
+  useEffect(() => {
+    const handleTutorialAIScheduleChange = () => {
+      const { isActive, currentStepIndex, steps, hasCompletedTutorial } = useTutorialStore.getState();
+      const currentStep = steps[currentStepIndex];
+      
+      // Don't show mock if tutorial is already completed
+      if (hasCompletedTutorial) {
+        return;
+      }
+      
+      // SHOW MOCK: During tutorial at Step 9 when user has tasks
+      if (isActive && currentStep?.id === 'dashboard-ai-schedule-button' && tasks.length > 0) {
+        const mockSchedule = generateMockAISchedule(tasks);
+        setAIScheduleResult(mockSchedule);
+        setStoreAIScheduleResult(mockSchedule);
+        setShowAIScheduleModal(true);
+        return;
+      }
+      
+      // KEEP MOCK ON SCHEDULER PAGE: Tutorial at Step 10+ - keep showing schedule, just hide modal
+      if (isActive && currentStep?.id !== 'dashboard-ai-schedule-button' && !hasCompletedTutorial) {
+        setShowAIScheduleModal(false); // Hide modal overlay but keep schedule data visible
+        return;
+      }
+      
+      // CLEAR MOCK: Tutorial skipped before completion
+      if (!isActive && !hasCompletedTutorial && aiScheduleResult && aiScheduleResult.insights.totalRecords <= 0) {
+        setAIScheduleResult(null);
+        setStoreAIScheduleResult(null);
+        setShowAIScheduleModal(false);
+        return;
+      }
+    };
+
+    const unsubscribe = useTutorialStore.subscribe(handleTutorialAIScheduleChange);
+    handleTutorialAIScheduleChange();
+    return () => unsubscribe();
+  }, [tasks, aiScheduleResult]);
+
+  // When tutorial completes, clear mock schedule and show locked message
+  useEffect(() => {
+    const handleTutorialComplete = (state: any) => {
+      if (state.hasCompletedTutorial && !state.isActive) {
+        // Only handle completion once per tutorial session
+        if (tutorialCompletionHandledRef.current) {
+          return;
+        }
+        tutorialCompletionHandledRef.current = true;
+        
+        const wasNewUser = tutorialStartedWithTasksRef.current === false;
+        const hasCreatedTasks = tasks.length > 0;
+        
+        // Only clear the mock AI schedule for NEW users (it was shown during tutorial)
+        // For existing users, preserve their actual AI schedule and show the modal
+        if (wasNewUser) {
+          setAIScheduleResult(null);
+          setStoreAIScheduleResult(null);
+          setShowAIScheduleModal(false);
+        } else {
+          // Existing users: show their AI schedule in the modal
+          // If they don't have a schedule yet, generate a mock one
+          if (aiScheduleResult) {
+            setShowAIScheduleModal(true);
+          } else {
+            // Generate mock schedule for existing users after tutorial
+            const mockSchedule = generateMockAISchedule(tasks);
+            setAIScheduleResult(mockSchedule);
+            setStoreAIScheduleResult(mockSchedule);
+            setShowAIScheduleModal(true);
+          }
+        }
+        
+        // FOR EXISTING USERS: Restore their tasks if they're missing
+        if (!wasNewUser && existingUserTasksRef.current.length > 0 && tasks.length === 0) {
+          // Existing user's tasks were cleared somehow - restore them
+          setTasks(existingUserTasksRef.current);
+        }
+        // FOR NEW USERS: Clear tutorial tasks
+        else if (wasNewUser && hasCreatedTasks) {
+          // New user completed tutorial with created tasks - clear them
+          clearTasks();
+          setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have 0.`);
+        }
+      }
+    };
+    
+    const unsubscribe = useTutorialStore.subscribe(handleTutorialComplete);
+    return () => unsubscribe();
+  }, [clearTasks, setTasks, tasks.length, aiScheduleResult]);
+
+  // When page loads after tutorial, show locked message only if user doesn't have enough tasks
+  useEffect(() => {
+    const { hasCompletedTutorial, isActive } = useTutorialStore.getState();
+    // Only show locked message if tutorial is NOT active AND tutorial is completed AND no schedule AND no error set
+    if (!isActive && hasCompletedTutorial && !aiScheduleResult && !scheduleError) {
+      const completedCount = tasks.filter(t => t.status === 'completed').length;
+      if (completedCount < 6) {
+        setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
+      }
+    }
+    // During tutorial, clear any error message so schedule displays
+    if (isActive && scheduleError) {
+      setScheduleError(null);
+    }
+  }, []);
+
+  // Reset AI Schedule modal shown flag when user logs in/changes
+  useEffect(() => {
+    if (user) {
+      showAIScheduleModalRef.current = false; // Reset when user logs in
+    }
+  }, [user?.uid]);
+
+  // Show AI Schedule modal automatically only once per session when schedule is loaded
+  useEffect(() => {
+    if (!user || authLoading || !aiScheduleResult) return;
+    
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    
+    // Show AI Schedule modal only once per session, not in tutorial mode
+    if (!showAIScheduleModalRef.current && (!isActive || hasCompletedTutorial)) {
+      setShowAIScheduleModal(true);
+      showAIScheduleModalRef.current = true;
+    }
+  }, [user, authLoading, aiScheduleResult]);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -247,13 +460,19 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
         tasksReadyRef.current = false;
+        autoStartTutorialTriggeredRef.current = false; // Reset auto-start flag on logout
         setActiveTab('dashboard');
         clearTasks();
         setAIScheduleResult(null);
         setStoreAIScheduleResult(null);
+        // Reset tutorial when user logs out
+        useTutorialStore.getState().resetTutorial();
       }
       setUser(firebaseUser);
       if (firebaseUser) {
+        // Reset tutorial for each new user login so they see it fresh
+        useTutorialStore.getState().resetTutorial();
+        
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           let resolvedName = firebaseUser.displayName || '';
@@ -632,7 +851,20 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
         console.error('Error saving task to Firestore:', error);
       }
     }
-    setShowForm(false);
+    
+    // During step 3 tutorial: Keep form open until 6 tasks are created
+    const { isActive, currentStepIndex, steps } = useTutorialStore.getState();
+    const currentStep = steps[currentStepIndex];
+    const tasksCount = getTasks().length;
+    
+    if (isActive && currentStep?.id === 'task-form-creation' && tasksCount < 6) {
+      // Keep form open, clear editing task for new entry
+      setEditingTask(undefined);
+      setShowForm(true);
+    } else {
+      // Close form when tutorial is done or not in step 3
+      setShowForm(false);
+    }
   };
 
   const handleDeleteTask = async (id: string) => {
@@ -723,12 +955,32 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   const handleScheduleClick = () => {
     if (!user || schedulingLoading) return;
+    
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    
+    // DURING TUTORIAL: Show mock schedule (unlocked preview)
+    if (isActive && !hasCompletedTutorial) {
+      // Tutorial is active - mock schedule is already showing via effect
+      return;
+    }
+    
+    // AFTER TUTORIAL / NORMAL MODE: Show settings reminder before scheduling
+    // Real schedule will be locked if user lacks task history
     setShowScheduleReminder(true);
   };
 
   const handleScheduleProceed = async () => {
     setShowScheduleReminder(false);
     if (!user || schedulingLoading) return;
+    
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    
+    // DURING TUTORIAL: Don't generate real schedule yet
+    if (isActive && !hasCompletedTutorial) {
+      return; // Tutorial shows mock schedule only
+    }
+    
+    // AFTER TUTORIAL: Generate real schedule (locked by history requirement)
     setSchedulingLoading(true);
     setScheduleError(null);
     try {
@@ -737,10 +989,13 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       setAIScheduleResult(result);
       setStoreAIScheduleResult(result);
       void saveAIScheduleToFirestore(user.uid, result);
+      // Show the AI Schedule Modal
+      setShowAIScheduleModal(true);
       // Navigate to scheduler page
       setActiveTab('scheduler');
     } catch (err) {
       if (err instanceof NotEnoughHistoryError) {
+        // LOCK: Require 6 completed tasks before allowing real schedule
         setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${err.count}.`);
         setActiveTab('scheduler');
       } else {
@@ -754,6 +1009,12 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
   const handleScheduleGoToSettings = () => {
     setShowScheduleReminder(false);
     setActiveTab('settings');
+    
+    // Auto-advance tutorial to next step when user clicks "Go to Settings"
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    if (isActive && !hasCompletedTutorial) {
+      useTutorialStore.getState().nextStep();
+    }
   };
 
   const handleAllTasksClick = () => {
@@ -862,7 +1123,12 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
             />
           ) : activeTab === 'scheduler' ? (
             <div className="tasks-page-enter">
-              <AISchedulerPage notEnoughDataMessage={scheduleError} selectedTaskId={selectedTaskId} />
+              <AISchedulerPage 
+                notEnoughDataMessage={
+                  useTutorialStore.getState().isActive ? null : scheduleError
+                } 
+                selectedTaskId={selectedTaskId} 
+              />
             </div>
           ) : activeTab === 'settings' ? (
             <SettingsPage />
@@ -918,10 +1184,10 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       )}
 
       {/* AI Schedule Modal */}
-      {aiScheduleResult && (
+      {aiScheduleResult && showAIScheduleModal && (
         <AIScheduleModal
           result={aiScheduleResult}
-          onClose={() => setAIScheduleResult(null)}
+          onClose={() => setShowAIScheduleModal(false)}
         />
       )}
 
