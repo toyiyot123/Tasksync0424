@@ -1,6 +1,8 @@
 import React from 'react';
-import { LayoutDashboard, ListTodo, Sparkles, Calendar, BarChart3, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, ListTodo, Sparkles, Calendar, BarChart3, Settings, LogOut, HelpCircle } from 'lucide-react';
 import LogoImage from './84909b83-0826-4104-9fe4-ff89c0b804e3-removebg-preview.png';
+import { useTutorialStore } from '@/store/tutorialStore';
+import { TOUR_STEPS } from '@/config/tourSteps';
 
 interface SidebarProps {
   activeTab?: string;
@@ -11,6 +13,8 @@ interface SidebarProps {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'dashboard', onTabChange, onSignOut, onOpenChange, isOpen = true }) => {
+
+  const { startTutorial } = useTutorialStore();
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -27,6 +31,10 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'dashboard', onTabChange,
 
   const handleSignOut = () => {
     onSignOut?.();
+  };
+
+  const handleStartTutorial = () => {
+    startTutorial(TOUR_STEPS);
   };
 
   return (
@@ -80,7 +88,14 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'dashboard', onTabChange,
         </nav>
 
         {/* Sign Out */}
-        <div className="p-4 border-t border-indigo-100">
+        <div className="p-4 border-t border-indigo-100 space-y-2">
+          <button
+            onClick={handleStartTutorial}
+            className="w-full flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-white/50 rounded-lg transition-all"
+          >
+            <HelpCircle className="w-5 h-5" />
+            <span className="font-medium">Tutorial</span>
+          </button>
           <button
             onClick={handleSignOut}
             className="w-full flex items-center gap-3 px-4 py-3 text-gray-700 hover:bg-white/50 rounded-lg transition-all"

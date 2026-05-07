@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Task } from '@/types';
 import { formatDate, isOverdue, getPriorityBadgeColor, getStatusColor } from '@/utils/taskUtils';
-import { Trash2, Edit2, Clock, Calendar } from 'lucide-react';
+import { Trash2, Edit2, Clock, Calendar, AlertTriangle } from 'lucide-react';
 import TaskTimer from './TaskTimer';
 
 interface TaskCardProps {
@@ -97,7 +97,10 @@ const TaskCard: React.FC<TaskCardProps> = ({ task, userId, onEdit, onDelete, onS
                   : 'text-orange-500 hover:text-green-600'
               }`}
             >
-              <Clock className="w-4 h-4" />
+              <div className="flex items-center gap-0.5">
+                <Clock className="w-4 h-4" />
+                {overdue && <AlertTriangle className="w-4 h-4 text-red-600" />}
+              </div>
               {task.status === 'completed' ? 'Done' : `${task.estimatedTime}m`}
             </button>
           )}

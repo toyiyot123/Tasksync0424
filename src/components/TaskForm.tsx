@@ -127,7 +127,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onSubmit, onClose, initialTask }) =
 
           {/* Description */}
           <div>
-            <label className="block text-sm font-semibold text-gray-900 mb-2">Description</label>
+            <label className="block text-sm font-semibold text-gray-900 mb-2">Description <span className="font-normal text-gray-500">(optional)</span></label>
             <textarea
               value={formData.description || ''}
               onChange={(e) => setFormData({ ...formData, description: e.target.value })}

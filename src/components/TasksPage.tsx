@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Task, TaskCategory } from '@/types';
 import { CalendarDays, CheckCircle2, Clock3, ListTodo, Plus, Search, Play, Clock, AlertTriangle } from 'lucide-react';
-import { formatDate, isOverdue } from '@/utils/taskUtils';
+import { formatDate, isOverdue, getDaysUntilDue } from '@/utils/taskUtils';
 
 const DEFAULT_CATEGORY_NAMES = ['Work', 'Personal', 'Health', 'Academics', 'Other'];
 const DEFAULT_CATEGORY_LOWER = DEFAULT_CATEGORY_NAMES.map(n => n.toLowerCase());
@@ -69,7 +69,7 @@ const TasksPage: React.FC<TasksPageProps> = ({
   const filteredTasks = useMemo(() => {
     const loweredQuery = query.trim().toLowerCase();
 
-    return tasks.filter((task) => {
+    const filtered = tasks.filter((task) => {
       let matchesStatus = false;
       
       if (filter === 'all') {
@@ -105,6 +105,28 @@ const TasksPage: React.FC<TasksPageProps> = ({
         [task.title, task.description, task.category, task.tags.join(' ')].join(' ').toLowerCase().includes(loweredQuery);
 
       return matchesStatus && matchesPriority && matchesCategory && matchesQuery;
+    });
+
+    // Sort tasks: overdue first, then nearly due (within 3 days), then others
+    return filtered.sort((a, b) => {
+      const aOverdue = isOverdue(a.dueDate) && a.status !== 'completed';
+      const bOverdue = isOverdue(b.dueDate) && b.status !== 'completed';
+
+      // Overdue tasks come first
+      if (aOverdue && !bOverdue) return -1;
+      if (!aOverdue && bOverdue) return 1;
+
+      // Both overdue or both not overdue - sort by due date
+      if (aOverdue && bOverdue) {
+        const aDueTime = new Date(a.dueDate).getTime();
+        const bDueTime = new Date(b.dueDate).getTime();
+        return aDueTime - bDueTime; // Earliest due date first
+      }
+
+      // Neither overdue - sort by days until due (nearly due first)
+      const aDaysUntil = getDaysUntilDue(a.dueDate);
+      const bDaysUntil = getDaysUntilDue(b.dueDate);
+      return aDaysUntil - bDaysUntil;
     });
   }, [tasks, filter, priorityFilter, categoryFilter, query]);
 
@@ -200,6 +222,7 @@ const TasksPage: React.FC<TasksPageProps> = ({
               key={task.id}
               className="task-card-enter rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 md:p-5"
               style={{ animationDelay: `${180 + index * 70}ms` }}
+              data-tour={task.status === 'todo' ? 'task-todo-card' : undefined}
             >
               <div className="mb-2 flex items-start justify-between gap-4">
                 <div className="flex flex-wrap items-center gap-2">
@@ -222,6 +245,7 @@ const TasksPage: React.FC<TasksPageProps> = ({
                     onClick={() => onStatusChange(task.id, 'in-progress')}
                     className="text-emerald-500 hover:text-emerald-600 transition-colors"
                     aria-label="Start task"
+                    data-tour="task-play-button"
                   >
                     <Play className="h-5 w-5" />
                   </button>
@@ -231,12 +255,18 @@ const TasksPage: React.FC<TasksPageProps> = ({
                     onClick={() => onStatusChange(task.id, 'completed')}
                     onMouseEnter={() => setHoveredDoneId(task.id)}
                     onMouseLeave={() => setHoveredDoneId(null)}
-                    className="transition-colors text-orange-500 hover:text-green-600"
+                    className="transition-colors text-orange-500 hover:text-green-600 flex items-center gap-1"
                     title="Mark as Done"
                   >
                     {hoveredDoneId === task.id
                       ? <CheckCircle2 className="h-5 w-5" />
-                      : <Clock className="h-5 w-5" />}
+                      : <>
+                          <Clock className="h-5 w-5" />
+                          {isOverdue(task.dueDate) && task.status !== 'completed' && (
+                            <AlertTriangle className="h-4 w-4 text-red-600" />
+                          )}
+                        </>
+                    }
                   </button>
                 )}
               </div>
@@ -257,9 +287,6 @@ const TasksPage: React.FC<TasksPageProps> = ({
                 <span className={`flex items-center gap-1.5 ${task.status !== 'completed' && isOverdue(task.dueDate) ? 'text-red-600 font-semibold' : ''}`}>
                   <CalendarDays className="h-4 w-4" />
                   {formatDate(task.dueDate)}
-                  {task.status !== 'completed' && isOverdue(task.dueDate) && (
-                    <AlertTriangle className="h-4 w-4 text-red-600" title="This task is overdue" />
-                  )}
                 </span>
                 <span className="flex items-center gap-1.5">
                   <Clock3 className="h-4 w-4" />
