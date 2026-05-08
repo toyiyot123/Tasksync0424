@@ -34,7 +34,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'dashboard', onTabChange,
   };
 
   const handleStartTutorial = () => {
-    startTutorial(TOUR_STEPS);
+    (window as any).restartTutorial?.();
   };
 
   return (

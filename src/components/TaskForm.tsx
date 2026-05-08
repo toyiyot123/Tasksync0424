@@ -99,7 +99,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ onSubmit, onClose, initialTask }) =
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onWheel={(e) => e.stopPropagation()} onTouchMove={(e) => e.stopPropagation()}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col" data-tour="task-form-container">
         <div className="flex items-center justify-between border-b border-gray-200 px-6 py-5 flex-shrink-0">
           <h2 className="text-2xl font-bold text-gray-900">{initialTask ? 'Edit Task' : 'New Task'}</h2>
           <button
