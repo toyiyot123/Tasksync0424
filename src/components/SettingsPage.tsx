@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
-import { Clock3, Heart, Save, CheckCircle2 } from 'lucide-react';
+import { Clock3, Heart, Save, CheckCircle2, RotateCcw } from 'lucide-react';
 import { useTaskStore } from '@/store/taskStore';
+import { useTutorialStore } from '@/store/tutorialStore';
+import { TOUR_STEPS } from '@/config/tourSteps';
 import { AIScheduleSettings } from '@/types';
 
 const SettingsPage: React.FC = () => {
   const { scheduleSettings, setScheduleSettings } = useTaskStore();
+  const { startTutorial } = useTutorialStore();
   const [saved, setSaved] = useState(false);
 
   const [workStart, setWorkStart] = useState(scheduleSettings.workStart);
@@ -25,6 +28,10 @@ const SettingsPage: React.FC = () => {
     setScheduleSettings({ workStart, workEnd, peakStart, peakEnd, taskBlock: 45, breakMinutes: 15, stressLevel, schedulingStyle });
     setSaved(true);
     setTimeout(() => setSaved(false), 3000);
+  };
+
+  const handleRedoTutorial = () => {
+    startTutorial(TOUR_STEPS);
   };
 
   return (
@@ -154,6 +161,26 @@ const SettingsPage: React.FC = () => {
           </>
         )}
       </button>
+
+      <section className="task-card-enter rounded-2xl border border-slate-200 bg-white p-6 shadow-sm" style={{ animationDelay: '460ms' }}>
+        <div className="mb-4 flex items-center gap-2">
+          <RotateCcw className="h-5 w-5 text-indigo-500" />
+          <h2 className="text-2xl font-bold text-slate-900">Tutorial Help</h2>
+        </div>
+        <p className="text-slate-600 mb-4">
+          Need a refresher on how TaskSync works? Restart the guided tour from the beginning.
+        </p>
+        <div data-tour="redo-tutorial-button">
+          <button
+            type="button"
+            onClick={handleRedoTutorial}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 font-semibold text-white hover:bg-indigo-700 transition-colors"
+          >
+            <RotateCcw className="h-4 w-4" />
+            Redo Tutorial Walkthrough
+          </button>
+        </div>
+      </section>
     </div>
   );
 };

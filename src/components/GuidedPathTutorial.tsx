@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useTutorialStore, TutorialStep } from '@/store/tutorialStore';
-import { useTaskStore } from '@/store/taskStore';
 import './GuidedPathTutorial.css';
 
 interface ElementPosition {
@@ -13,11 +12,8 @@ interface ElementPosition {
 
 const GuidedPathTutorial: React.FC = () => {
   const { isActive, currentStepIndex, steps, nextStep, previousStep, skipTutorial, pageNavigator } = useTutorialStore();
-  const { getTasks } = useTaskStore();
   const [elementPosition, setElementPosition] = useState<ElementPosition | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
-  const [canProceed, setCanProceed] = useState(true);
-  const [taskCount, setTaskCount] = useState(0);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const currentStep = steps[currentStepIndex];
@@ -27,36 +23,7 @@ const GuidedPathTutorial: React.FC = () => {
     if (!isActive || !currentStep || !currentStep.page || !pageNavigator) return;
     
     pageNavigator(currentStep.page);
-    
-    // Check if we can proceed to next step
-    if (currentStep.canAdvance) {
-      setCanProceed(currentStep.canAdvance());
-    } else {
-      setCanProceed(true);
-    }
-
-    // Update task count for step 3
-    if (currentStep.id === 'task-form-creation') {
-      setTaskCount(getTasks().length);
-    }
-  }, [isActive, currentStep, pageNavigator, getTasks]);
-
-  // Monitor if canAdvance condition changes (e.g., task created)
-  useEffect(() => {
-    if (!isActive || !currentStep || !currentStep.canAdvance) return;
-
-    // Check every 500ms if the condition is now met and update task count
-    const checkInterval = setInterval(() => {
-      setCanProceed(currentStep.canAdvance!());
-      
-      // Update task count for step 3
-      if (currentStep.id === 'task-form-creation') {
-        setTaskCount(getTasks().length);
-      }
-    }, 500);
-
-    return () => clearInterval(checkInterval);
-  }, [isActive, currentStep, getTasks]);
+  }, [isActive, currentStep, pageNavigator]);
 
   // Update element position when step changes or window resizes
   useEffect(() => {
@@ -66,7 +33,7 @@ const GuidedPathTutorial: React.FC = () => {
     let retryCount = 0;
     const maxRetries = 50; // Try for up to 2.5 seconds
     const retryDelay = 50;
-    let timeoutId: ReturnType<typeof setTimeout>;
+    let timeoutId: NodeJS.Timeout;
 
     const updatePosition = () => {
       if (!isMounted) return;
@@ -251,7 +218,7 @@ const GuidedPathTutorial: React.FC = () => {
   return (
     <>
       {/* Dark Overlay */}
-      <div className="guided-path-overlay" />
+      <div className="guided-path-overlay" onClick={skipTutorial} />
 
       {/* Highlight Box with Pulsing Blue Arrow */}
       {elementPosition && (
@@ -291,7 +258,6 @@ const GuidedPathTutorial: React.FC = () => {
           top: tooltipPosition.top,
           left: tooltipPosition.left,
         }}
-        onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 mb-2">
           <h3 className="text-lg font-bold text-slate-900">{currentStep.title}</h3>
@@ -307,14 +273,6 @@ const GuidedPathTutorial: React.FC = () => {
         <p className="text-sm text-slate-600 mb-4 leading-relaxed">
           {currentStep.message}
         </p>
-
-        {!canProceed && currentStep?.id === 'task-form-creation' && (
-          <div className="mb-4 p-3 bg-black rounded-lg">
-            <p className="text-sm text-yellow-300 font-semibold">
-              ⏳ Create 6 tasks to continue the tutorial. ({taskCount}/6 created)
-            </p>
-          </div>
-        )}
 
         {/* Progress Bar */}
         <div className="mb-4 h-1 bg-slate-200 rounded-full overflow-hidden">
@@ -343,12 +301,7 @@ const GuidedPathTutorial: React.FC = () => {
 
             <button
               onClick={nextStep}
-              disabled={!canProceed}
-              className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all ${
-                canProceed
-                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:opacity-90'
-                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-              }`}
+              className="inline-flex items-center gap-1 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
             >
               {currentStepIndex === total - 1 ? 'Finish' : 'Next'}
               {currentStepIndex < total - 1 && <ChevronRight className="h-4 w-4" />}
