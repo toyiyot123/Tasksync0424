@@ -31,6 +31,7 @@ export class DQLSchedulerModel {
   private readonly actionSize = 14; // hours 8–21
   private readonly gamma = 0.95;
   private _trained = false;
+  private lastDataHash = '';
 
   constructor() {
     this.model = this.buildNetwork();
@@ -53,6 +54,21 @@ export class DQLSchedulerModel {
   }
 
   /**
+   * Simple hash of training data to detect if retraining is needed
+   */
+  private hashData(records: DQLTrainingRecord[]): string {
+    // Create a simple hash from data - if same data, don't retrain
+    const dataStr = records.map(r => `${r.hour}-${r.priorityNum}-${r.durationHrs}-${r.completed}`).join('|');
+    let hash = 0;
+    for (let i = 0; i < dataStr.length; i++) {
+      const char = dataStr.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    return String(Math.abs(hash));
+  }
+
+  /**
    * Normalize state to [0,1] — matches notebook's get_state().
    *   hour:        (h - 8) / 13      (8-21 → 0-1)
    *   priorityNum: (p - 1) / 9       (1-10 → 0-1)
@@ -69,9 +85,21 @@ export class DQLSchedulerModel {
   /**
    * Train the Deep Q-Network on historical task records.
    * Mirrors the notebook's train_model() with experience replay + Bellman updates.
+   * 
+   * NOTE: If data hasn't changed since last training, skips retraining for consistent predictions.
    */
   async train(records: DQLTrainingRecord[]): Promise<void> {
     if (records.length < 5) return;
+
+    // Check if data has changed - if not, skip retraining to maintain consistent scores
+    const dataHash = this.hashData(records);
+    if (this._trained && dataHash === this.lastDataHash) {
+      console.log('[DQL] Data unchanged - skipping retraining for consistent predictions');
+      return;
+    }
+
+    this.lastDataHash = dataHash;
+    console.log('[DQL] Data changed or first training - retraining model');
 
     // Build experience replay buffer from historical records
     const experiences = records.map(r => ({
@@ -87,10 +115,12 @@ export class DQLSchedulerModel {
     const batchSize = Math.min(32, experiences.length);
 
     for (let epoch = 0; epoch < epochs; epoch++) {
-      // Random mini-batch (mirrors notebook's random.sample)
-      const batch = [...experiences]
-        .sort(() => Math.random() - 0.5)
-        .slice(0, batchSize);
+      // Deterministic batch sampling - same order each training
+      const shuffled = [...experiences].sort((a, b) => {
+        // Deterministic sort based on data hash instead of random
+        return JSON.stringify(a).localeCompare(JSON.stringify(b));
+      });
+      const batch = shuffled.slice(0, batchSize);
 
       const statesTensor     = tf.tensor2d(batch.map(e => e.state));
       const nextStatesTensor = tf.tensor2d(batch.map(e => e.nextState));
@@ -198,11 +228,15 @@ export class DQLSchedulerModel {
   /**
    * Persist the trained model weights to localStorage so the DQL accumulates
    * learning across browser sessions without retraining from scratch each time.
+   * Also saves the data hash to enable smart retraining detection.
    * Key is namespaced per user so multiple accounts don't share weights.
    */
   async save(userId: string): Promise<void> {
     try {
       await this.model.save(`localstorage://dql-scheduler-${userId}`);
+      // Also save the data hash so we can skip retraining if same data
+      localStorage.setItem(`dql-scheduler-hash-${userId}`, this.lastDataHash);
+      console.log('[DQL] Model and hash saved to localStorage');
     } catch (e) {
       console.warn('[DQLModel] Could not save weights:', e);
     }
@@ -211,6 +245,7 @@ export class DQLSchedulerModel {
   /**
    * Load previously saved weights from localStorage and return a ready-to-use model.
    * If no saved weights exist (first run or cleared storage), returns a fresh instance.
+   * Also restores the data hash so the model knows if retraining is needed.
    *
    * Usage:
    *   const model = await DQLSchedulerModel.load(userId);
@@ -226,8 +261,17 @@ export class DQLSchedulerModel {
       instance.model.dispose();
       instance.model = loaded as tf.Sequential;
       instance.syncTarget(); // sync target network to the loaded weights
+      instance._trained = true; // Mark as trained since we loaded from storage
+      
+      // Restore the data hash to enable smart retraining
+      const savedHash = localStorage.getItem(`dql-scheduler-hash-${userId}`);
+      if (savedHash) {
+        instance.lastDataHash = savedHash;
+        console.log('[DQL] Model loaded from localStorage with saved hash');
+      }
     } catch {
       // No saved model yet — start fresh (first run)
+      console.log('[DQL] No saved model found, starting fresh');
     }
     return instance;
   }

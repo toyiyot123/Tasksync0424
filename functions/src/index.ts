@@ -5,16 +5,22 @@
 
 import * as functions from 'firebase-functions/v1';
 import * as admin from 'firebase-admin';
+import { processSchedule } from './taskReminders';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 
-export { sendNearlyDueReminder, sendOverdueAlert } from './taskReminders';
+export {
+  sendNearlyDueReminder,
+  sendNearlyDueOnTaskCreate,
+  sendOverdueAlert,
+} from './taskReminders';
 
 /**
  * HTTP Endpoint for manual notification triggering
- * Call: /api/notify?mode=overdue or /api/notify?mode=nearly-due
+ * Call: /notify?mode=overdue or /notify?mode=nearly-due
+ * Returns: JSON with sent count and results
  */
 export const notify = functions.https.onRequest(async (req, res) => {
   // Enable CORS
@@ -35,10 +41,14 @@ export const notify = functions.https.onRequest(async (req, res) => {
       return;
     }
 
+    // Actually send the notifications
+    const result = await processSchedule(mode as 'nearly-due' | 'overdue');
+
     res.status(200).json({
       success: true,
       mode,
-      message: `Notification endpoint ready. Use scheduled functions for automatic notifications.`,
+      message: `Sent ${result.sent} notifications to ${result.users} users`,
+      result,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
