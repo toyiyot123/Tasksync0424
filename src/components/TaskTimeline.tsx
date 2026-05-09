@@ -2,11 +2,13 @@ import React from 'react';
 import { CalendarDays, ArrowRight } from 'lucide-react';
 import { Task } from '@/types';
 import { isToday } from '@/utils/taskUtils';
+import { AIScheduleResult, ScheduledTask } from '@/services/AIScheduleService';
 
 interface TaskTimelineProps {
   tasks: Task[];
   onViewAllClick?: () => void;
   onStatusChange?: (id: string, status: Task['status']) => void;
+  aiScheduleResult?: AIScheduleResult | null;
 }
 
 const priorityDotColor: Record<Task['priority'], string> = {
@@ -15,11 +17,37 @@ const priorityDotColor: Record<Task['priority'], string> = {
   high: 'bg-red-500',
 };
 
-const TaskTimeline: React.FC<TaskTimelineProps> = ({ tasks, onViewAllClick }) => {
-  const scheduleTasks = tasks
-    .filter(t => t.status !== 'completed' && isToday(t.dueDate))
-    .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
-    .slice(0, 5);
+const TaskTimeline: React.FC<TaskTimelineProps> = ({ tasks, onViewAllClick, aiScheduleResult }) => {
+  // Use AI schedule if available to determine today's tasks
+  // Otherwise fall back to checking if task due date is today
+  const scheduleTasks = React.useMemo(() => {
+    if (aiScheduleResult?.schedule && aiScheduleResult.schedule.length > 0) {
+      // Use AI schedule: get tasks scheduled for today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const todaysTasks = aiScheduleResult.schedule
+        .filter(st => {
+          const scheduledDay = new Date(st.scheduledDate);
+          scheduledDay.setHours(0, 0, 0, 0);
+          return scheduledDay.getTime() === today.getTime();
+        })
+        .sort((a, b) => {
+          // Sort by start time
+          const aTime = parseInt(a.startTime.split(':')[0]);
+          const bTime = parseInt(b.startTime.split(':')[0]);
+          return aTime - bTime;
+        })
+        .map(st => st.task);
+      
+      return todaysTasks;
+    } else {
+      // Fallback: use due date to determine today's tasks
+      return tasks
+        .filter(t => t.status !== 'completed' && isToday(t.dueDate))
+        .sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+    }
+  }, [aiScheduleResult, tasks]);
 
   if (scheduleTasks.length === 0) {
     return (

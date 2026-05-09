@@ -13,50 +13,24 @@ interface ElementPosition {
 
 const GuidedPathTutorial: React.FC = () => {
   const { isActive, currentStepIndex, steps, nextStep, previousStep, skipTutorial, pageNavigator } = useTutorialStore();
-  const { getTasks } = useTaskStore();
+  const tasks = useTaskStore((state) => state.tasks);
   const [elementPosition, setElementPosition] = useState<ElementPosition | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
-  const [canProceed, setCanProceed] = useState(true);
-  const [taskCount, setTaskCount] = useState(0);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const currentStep = steps[currentStepIndex];
+  
+  // Step 3 (index 2) requires at least 6 tasks to proceed
+  const isStep3 = currentStepIndex === 2;
+  const hasEnoughTasks = tasks.length >= 6;
+  const canProceedToStep4 = !isStep3 || hasEnoughTasks;
 
   // Navigate to the current step's page when tutorial starts or step changes
   useEffect(() => {
     if (!isActive || !currentStep || !currentStep.page || !pageNavigator) return;
     
     pageNavigator(currentStep.page);
-    
-    // Check if we can proceed to next step
-    if (currentStep.canAdvance) {
-      setCanProceed(currentStep.canAdvance());
-    } else {
-      setCanProceed(true);
-    }
-
-    // Update task count for step 3
-    if (currentStep.id === 'task-form-creation') {
-      setTaskCount(getTasks().length);
-    }
-  }, [isActive, currentStep, pageNavigator, getTasks]);
-
-  // Monitor if canAdvance condition changes (e.g., task created)
-  useEffect(() => {
-    if (!isActive || !currentStep || !currentStep.canAdvance) return;
-
-    // Check every 500ms if the condition is now met and update task count
-    const checkInterval = setInterval(() => {
-      setCanProceed(currentStep.canAdvance!());
-      
-      // Update task count for step 3
-      if (currentStep.id === 'task-form-creation') {
-        setTaskCount(getTasks().length);
-      }
-    }, 500);
-
-    return () => clearInterval(checkInterval);
-  }, [isActive, currentStep, getTasks]);
+  }, [isActive, currentStep, pageNavigator]);
 
   // Update element position when step changes or window resizes
   useEffect(() => {
@@ -291,7 +265,6 @@ const GuidedPathTutorial: React.FC = () => {
           top: tooltipPosition.top,
           left: tooltipPosition.left,
         }}
-        onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 mb-2">
           <h3 className="text-lg font-bold text-slate-900">{currentStep.title}</h3>
@@ -307,14 +280,6 @@ const GuidedPathTutorial: React.FC = () => {
         <p className="text-sm text-slate-600 mb-4 leading-relaxed">
           {currentStep.message}
         </p>
-
-        {!canProceed && currentStep?.id === 'task-form-creation' && (
-          <div className="mb-4 p-3 bg-black rounded-lg">
-            <p className="text-sm text-yellow-300 font-semibold">
-              ⏳ Create 6 tasks to continue the tutorial. ({taskCount}/6 created)
-            </p>
-          </div>
-        )}
 
         {/* Progress Bar */}
         <div className="mb-4 h-1 bg-slate-200 rounded-full overflow-hidden">
@@ -341,11 +306,17 @@ const GuidedPathTutorial: React.FC = () => {
               </button>
             )}
 
+            {isStep3 && !hasEnoughTasks && (
+              <div className="text-sm font-medium text-slate-600">
+                Create {6 - tasks.length} more task{6 - tasks.length !== 1 ? 's' : ''} to proceed →
+              </div>
+            )}
+
             <button
               onClick={nextStep}
-              disabled={!canProceed}
+              disabled={!canProceedToStep4}
               className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all ${
-                canProceed
+                canProceedToStep4
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:opacity-90'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}

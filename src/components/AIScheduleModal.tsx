@@ -66,13 +66,13 @@ const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) =>
 
           {/* Insights banner */}
           {insights.totalRecords > 0 ? (
-            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3" data-tour="insights-banner">
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 space-y-3">
               <div className="flex items-center gap-2 text-indigo-700 font-semibold text-sm">
                 <Zap className="w-4 h-4" />
                 Personalized from {insights.totalRecords} historical records · {insights.overallSuccessRate}% overall success rate
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <div data-tour="scheduler-best-hours">
+                <div>
                   <div className="flex items-center gap-1 text-xs font-medium text-green-700 mb-1">
                     <TrendingUp className="w-3 h-3" /> Best Productivity Hours
                   </div>
@@ -82,7 +82,7 @@ const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) =>
                     </div>
                   ))}
                 </div>
-                <div data-tour="scheduler-lowest-hours">
+                <div>
                   <div className="flex items-center gap-1 text-xs font-medium text-red-600 mb-1">
                     <TrendingDown className="w-3 h-3" /> Lowest Productivity Hours
                   </div>

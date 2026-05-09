@@ -292,14 +292,22 @@ export async function generateAISchedule(
   const WORK_START = settings.workStart;
   const WORK_END = settings.workEnd;
 
-  // Stress level determines break time — affects task density and spacing
-  // High stress: 35 minutes → fewer tasks, maximum recovery time
-  // Moderate stress: 20 minutes → balanced task density
-  // Low stress: 10 minutes → denser schedule, more tasks back-to-back
-  const effectiveBreak =
-    settings.stressLevel === 'High' ? 35 :
-    settings.stressLevel === 'Low'  ? 10 :
-    20; // Moderate
+  // Priority-based break times: each task gets its own recovery time based on priority
+  // Low priority: 10 minutes — quick recovery for lighter tasks
+  // Medium priority: 20 minutes — balanced recovery
+  // High priority: 30 minutes — longer recovery after intense work
+  const getBreakTime = (priority: Task['priority']): number => {
+    switch (priority) {
+      case 'low':
+        return 10;
+      case 'medium':
+        return 20;
+      case 'high':
+        return 30;
+      default:
+        return 20;
+    }
+  };
 
   // ── Learn weights from user's history (used as DQL fallback) ──
   const learnedWeights = learnWeights(records);
@@ -473,7 +481,8 @@ export async function generateAISchedule(
      *
      * Returns null only if the task cannot fit anywhere in the workday.
      */
-    const findSlot = (preferred: number, duration: number): number | null => {
+    const findSlot = (preferred: number, duration: number, task: Task): number | null => {
+      const breakTime = getBreakTime(task.priority);
       const fullStart = WORK_START * 60;
       const fullEnd   = WORK_END   * 60;
       const sorted    = [...dayIntervals].sort((a, b) => a.start - b.start);
@@ -482,7 +491,7 @@ export async function generateAISchedule(
         let slot = Math.max(from, fullStart);
         for (const iv of sorted) {
           if (slot + duration <= iv.start) break;   // fits before this interval
-          if (slot < iv.end) slot = iv.end + effectiveBreak; // jump past it + break
+          if (slot < iv.end) slot = iv.end + breakTime; // jump past it + priority-based break
         }
         return slot + duration <= endLimit ? slot : null;
       };
@@ -551,7 +560,7 @@ export async function generateAISchedule(
         }
       }
 
-      const startMins = findSlot(preferredMins, durationMins);
+      const startMins = findSlot(preferredMins, durationMins, task);
       if (startMins === null) continue; // can't fit even in full workday — skip
 
       const endMins = startMins + durationMins;

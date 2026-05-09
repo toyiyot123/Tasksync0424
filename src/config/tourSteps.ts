@@ -1,11 +1,4 @@
 import { TutorialStep } from '@/store/tutorialStore';
-import { useTaskStore } from '@/store/taskStore';
-
-// Function to check if user has created at least 6 tasks
-const hasCreatedTask = () => {
-  const tasks = useTaskStore.getState().getTasks();
-  return tasks.length >= 6;
-};
 
 export const TOUR_STEPS: TutorialStep[] = [
   // Step 1: Dashboard Overview
@@ -42,7 +35,6 @@ export const TOUR_STEPS: TutorialStep[] = [
     position: 'left',
     highlightPadding: 8,
     page: 'tasks',
-    canAdvance: hasCreatedTask,
   },
 
   // Step 4: Task Action Buttons (moved from Step 5)
@@ -51,7 +43,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     targetSelector: '[data-tour="task-play-button"]',
     title: '▶️ Start Working on Your Task',
     message:
-      'Once you create tasks, you\'ll see them here with action buttons. Here are some example tasks you might add:\n• "Complete quarterly report" (High priority, Due Friday)\n• "Review project budget" (High priority, Due Tomorrow)\n• "Prepare presentation slides" (Medium priority, Due Next Week)\n• "Schedule team meeting" (Low priority, Due This Week)\n\nClick the play button on any task to change its status from "To Do" to "In Progress." As you work on tasks and mark them complete, the AI learns your actual work pace and patterns. It\'s like having a personal assistant that learns how you work over time!',
+      'Click the play button to start a task. When you click it, the task status changes from "To Do" to "In Progress." As you work on tasks and mark them complete, the AI learns your actual work pace and patterns. It\'s like having a personal assistant that learns how you work over time!',
     position: 'bottom',
     highlightPadding: 6,
     page: 'tasks',
@@ -112,7 +104,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: 'AI Generated Schedule',
     message:
       'Click here to see a preview of how the AI Scheduler works! You\'ll see your task intelligently scheduled with confidence scores and reasoning. For example, if your task is marked as "High Priority," the AI will schedule it during your peak productivity hours. After the tutorial, you can configure your work preferences in Settings to get even smarter scheduling!',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 2,
     page: 'dashboard',
   },
@@ -121,11 +113,11 @@ export const TOUR_STEPS: TutorialStep[] = [
   {
     id: 'scheduler-best-hours',
     targetSelector: '[data-tour="scheduler-best-hours"]',
-    title: '⭐ Your Best Productivity Hours',
+    title: '⭐ Your Power Hours',
     message:
-      'Look at this insight! From analyzing 7 historical task records with an 86% overall success rate, your best productivity time is 9:00 PM - 10:00 PM with 86% success (shown on the left). These are your "power hours" when you consistently finish tasks fastest. The AI schedules your most important work here so you finish strong!',
-    position: 'bottom',
-    highlightPadding: 8,
+      'Here\'s a cool insight from the AI! For example, you might see: 10:00 AM - 11:30 AM (94% success rate) and 2:00 PM - 3:30 PM (87% success rate). These are your "power hours" when you consistently finish tasks fastest. The AI will schedule your most important work here so you finish strong!',
+    position: 'left',
+    highlightPadding: 10,
     page: 'scheduler',
   },
 
@@ -133,11 +125,11 @@ export const TOUR_STEPS: TutorialStep[] = [
   {
     id: 'scheduler-lowest-hours',
     targetSelector: '[data-tour="scheduler-lowest-hours"]',
-    title: '🚫 Your Lowest Productivity Hours',
+    title: '🚫 Your Challenging Times',
     message:
-      'The AI also identified your challenging times on the right side. In this example, 9:00 PM - 10:00 PM shows 86% success as your lowest productivity hour (your "challenge time"). Instead of forcing important work into these low-energy periods, the AI schedules lighter tasks here. This keeps you feeling good and prevents burnout!',
-    position: 'bottom',
-    highlightPadding: 8,
+      'The AI also learns when you struggle. Sample times might look like: 4:00 PM - 5:30 PM (45% success rate) or 1:00 PM - 2:00 PM (38% success rate). Instead of forcing important work into these low-energy times, the AI schedules lighter tasks here. This keeps you feeling good and prevents burnout!',
+    position: 'left',
+    highlightPadding: 10,
     page: 'scheduler',
   },
 
@@ -160,7 +152,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: '📅 Your Visual Schedule',
     message:
       'The Calendar view is your big-picture overview. You might see: Monday (2 moderate tasks), Tuesday (2 busy tasks), Wednesday (2 medium tasks), Thursday (1 light task), Friday (2 moderate tasks with deadline). It\'s perfect for planning ahead and making sure you\'re not overwhelmed on any single day!',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 12,
     page: 'calendar',
   },
@@ -172,7 +164,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: '📈 Watch Your Growth',
     message:
       'This is where you see your success story! You might see: 76% completion rate (34 of 45 tasks), 85% on-time completion, 86% high-priority completion, and productivity growing from 72% → 76% → 81% → 85% over 4 weeks! These insights help you celebrate wins and make improvements.',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 12,
     page: 'analytics',
   },
@@ -184,18 +176,8 @@ export const TOUR_STEPS: TutorialStep[] = [
     title: '🎓 Keep Learning Anytime',
     message:
       'That\'s the complete tour! Don\'t worry if you want to revisit this walkthrough—you can always click the "Tutorial" button in the sidebar to start over. Whether you need a refresher or want to learn a feature you missed, the tutorial is here for you whenever you need it!',
-    position: 'top',
+    position: 'center',
     highlightPadding: 2,
     page: 'settings',
   },
 ];
-
-// Tour steps for existing users - same 15 steps but without task creation requirement
-export const EXISTING_USER_TOUR_STEPS: TutorialStep[] = TOUR_STEPS.map(step => {
-  // Remove the canAdvance check from step 3 for existing users
-  if (step.id === 'task-form-creation') {
-    const { canAdvance, ...rest } = step;
-    return rest;
-  }
-  return step;
-});

@@ -11,13 +11,18 @@ export function generateMockAISchedule(tasks: Task[]): AIScheduleResult {
   // Sample productivity insights for demo purposes
   const insights = {
     bestHours: [
-      { hour: 21, rate: 86 },
+      { hour: 10, rate: 94 },
+      { hour: 11, rate: 92 },
+      { hour: 14, rate: 88 },
+      { hour: 15, rate: 85 },
     ],
     worstHours: [
-      { hour: 21, rate: 86 },
+      { hour: 16, rate: 45 },
+      { hour: 17, rate: 42 },
+      { hour: 13, rate: 38 },
     ],
-    overallSuccessRate: 86,
-    totalRecords: 7, // Shows example: 7 historical task records
+    overallSuccessRate: 78,
+    totalRecords: 1, // Set to 1 to show productivity insights during tutorial
   };
 
   // Create mock scheduled tasks from user's actual tasks
