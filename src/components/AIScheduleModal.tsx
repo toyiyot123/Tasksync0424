@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Sparkles, Clock, TrendingUp, TrendingDown, CheckCircle, AlertCircle, Zap } from 'lucide-react';
 import { AIScheduleResult } from '@/services/AIScheduleService';
+import { useTutorialStore } from '@/store/tutorialStore';
 
 interface AIScheduleModalProps {
   result: AIScheduleResult;
@@ -35,10 +36,20 @@ const confidenceBg = (pct: number) => {
 
 const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) => {
   const { schedule, insights, generatedAt } = result;
+  const { isActive, currentStepIndex, steps, nextStep } = useTutorialStore();
+  const currentStep = steps[currentStepIndex];
+
+  const handleClose = () => {
+    onClose();
+    // If tutorial is active at Step 9, advance to Step 10 when closing the modal
+    if (isActive && currentStep?.id === 'dashboard-ai-schedule-button') {
+      nextStep();
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" data-tour="ai-schedule-reminder">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" data-tour="ai-generated-schedule-modal">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 bg-indigo-600 text-white rounded-t-2xl">
@@ -46,7 +57,7 @@ const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) =>
             <Sparkles className="w-5 h-5" />
             <h2 className="text-lg font-bold">AI-Generated Schedule</h2>
           </div>
-          <button onClick={onClose} className="hover:bg-indigo-700 rounded-lg p-1 transition-colors">
+          <button onClick={handleClose} className="hover:bg-indigo-700 rounded-lg p-1 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -170,7 +181,7 @@ const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) =>
         <div className="px-6 py-3 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400">
           <span>Generated at {generatedAt.toLocaleTimeString()}</span>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             data-tour="ai-schedule-reminder-continue"
             className="bg-indigo-600 text-white text-sm font-medium px-4 py-1.5 rounded-lg hover:bg-indigo-700 transition-colors"
           >

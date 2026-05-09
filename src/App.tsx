@@ -14,6 +14,7 @@ import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
 import { generateAISchedule, AIScheduleResult, NotEnoughHistoryError, saveAIScheduleToFirestore, loadAIScheduleFromFirestore } from '@/services/AIScheduleService';
+import { generateMockAISchedule } from '@/services/MockAIScheduleService';
 import { DQLSchedulerModel } from '@/services/DQLModel';
 import LoginPage from '@/components/LoginPage';
 import Sidebar from '@/components/Sidebar';
@@ -87,6 +88,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [aiScheduleResult, setAIScheduleResult] = useState<AIScheduleResult | null>(null);
+  const [showAIScheduleModal, setShowAIScheduleModal] = useState(false);
   const [schedulingLoading, setSchedulingLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [showScheduleReminder, setShowScheduleReminder] = useState(false);
@@ -117,6 +119,21 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     });
   }, []);
 
+  // Auto-start tutorial for first-time users
+  useEffect(() => {
+    if (!authLoading && user && tasks.length === 0) {
+      // Use a small timeout to ensure tutorial store reset has completed
+      const timeout = setTimeout(() => {
+        const { hasCompletedTutorial, isActive, startTutorial } = useTutorialStore.getState();
+        if (!hasCompletedTutorial && !isActive) {
+          startTutorial(TOUR_STEPS);
+        }
+      }, 100);
+      return () => clearTimeout(timeout);
+    }
+  }, [authLoading, user, tasks.length]);
+
+
   // Show reminder modal when tutorial reaches Step 4 or Step 7
   useEffect(() => {
     const handleTutorialChange = () => {
@@ -138,6 +155,104 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     handleTutorialChange();
     
     return () => unsubscribe();
+  }, []);
+
+  // Auto-open task form when tutorial reaches Step 3 (task-form-creation)
+  useEffect(() => {
+    const handleTutorialFormChange = () => {
+      const { isActive, currentStepIndex, steps } = useTutorialStore.getState();
+      const currentStep = steps[currentStepIndex];
+      
+      // Show form on Step 3 (task-form-creation)
+      if (isActive && currentStep?.id === 'task-form-creation') {
+        setShowForm(true);
+      } else {
+        setShowForm(false);
+      }
+    };
+
+    // Subscribe to tutorial store changes
+    const unsubscribe = useTutorialStore.subscribe(handleTutorialFormChange);
+    
+    // Check on mount
+    handleTutorialFormChange();
+    
+    return () => unsubscribe();
+  }, []);
+
+  // DURING TUTORIAL: Show mock AI schedule when tutorial reaches Step 9
+  // AFTER TUTORIAL: Mock schedule is cleared by separate effect below
+  useEffect(() => {
+    const handleTutorialAIScheduleChange = () => {
+      const { isActive, currentStepIndex, steps, hasCompletedTutorial } = useTutorialStore.getState();
+      const currentStep = steps[currentStepIndex];
+      
+      // Don't show mock if tutorial is already completed
+      if (hasCompletedTutorial) {
+        return;
+      }
+      
+      // SHOW MOCK: During tutorial at Step 9 when user has tasks
+      if (isActive && currentStep?.id === 'dashboard-ai-schedule-button' && tasks.length > 0) {
+        const mockSchedule = generateMockAISchedule(tasks);
+        setAIScheduleResult(mockSchedule);
+        setStoreAIScheduleResult(mockSchedule);
+        setShowAIScheduleModal(true);
+        return;
+      }
+      
+      // KEEP MOCK ON SCHEDULER PAGE: Tutorial at Step 10+ - keep showing schedule, just hide modal
+      if (isActive && currentStep?.id !== 'dashboard-ai-schedule-button' && !hasCompletedTutorial) {
+        setShowAIScheduleModal(false); // Hide modal overlay but keep schedule data visible
+        return;
+      }
+      
+      // CLEAR MOCK: Tutorial skipped before completion
+      if (!isActive && !hasCompletedTutorial && aiScheduleResult && aiScheduleResult.insights.totalRecords <= 0) {
+        setAIScheduleResult(null);
+        setStoreAIScheduleResult(null);
+        setShowAIScheduleModal(false);
+        return;
+      }
+    };
+
+    const unsubscribe = useTutorialStore.subscribe(handleTutorialAIScheduleChange);
+    handleTutorialAIScheduleChange();
+    return () => unsubscribe();
+  }, [tasks, aiScheduleResult]);
+
+  // When tutorial completes, clear mock schedule and show locked message only if needed
+  useEffect(() => {
+    const unsubscribe = useTutorialStore.subscribe((state) => {
+      if (state.hasCompletedTutorial && aiScheduleResult && aiScheduleResult.insights.totalRecords <= 0) {
+        const completedCount = tasks.filter(t => t.status === 'completed').length;
+        setAIScheduleResult(null);
+        setStoreAIScheduleResult(null);
+        setShowAIScheduleModal(false);
+        // Only show locked message if user doesn't have enough completed tasks
+        if (completedCount < 6) {
+          setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
+        }
+      }
+    });
+    
+    return () => unsubscribe();
+  }, [aiScheduleResult, tasks]);
+
+  // When page loads after tutorial, show locked message only if user doesn't have enough tasks
+  useEffect(() => {
+    const { hasCompletedTutorial, isActive } = useTutorialStore.getState();
+    // Only show locked message if tutorial is NOT active AND tutorial is completed AND no schedule AND no error set
+    if (!isActive && hasCompletedTutorial && !aiScheduleResult && !scheduleError) {
+      const completedCount = tasks.filter(t => t.status === 'completed').length;
+      if (completedCount < 6) {
+        setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
+      }
+    }
+    // During tutorial, clear any error message so schedule displays
+    if (isActive && scheduleError) {
+      setScheduleError(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -251,9 +366,14 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
         clearTasks();
         setAIScheduleResult(null);
         setStoreAIScheduleResult(null);
+        // Reset tutorial when user logs out
+        useTutorialStore.getState().resetTutorial();
       }
       setUser(firebaseUser);
       if (firebaseUser) {
+        // Reset tutorial for each new user login so they see it fresh
+        useTutorialStore.getState().resetTutorial();
+        
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
           let resolvedName = firebaseUser.displayName || '';
@@ -633,6 +753,13 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       }
     }
     setShowForm(false);
+    
+    // Auto-advance tutorial when task is created during step 3
+    const { isActive, currentStepIndex, steps, nextStep } = useTutorialStore.getState();
+    const currentStep = steps[currentStepIndex];
+    if (isActive && currentStep?.id === 'task-form-creation') {
+      nextStep();
+    }
   };
 
   const handleDeleteTask = async (id: string) => {
@@ -723,12 +850,32 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   const handleScheduleClick = () => {
     if (!user || schedulingLoading) return;
+    
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    
+    // DURING TUTORIAL: Show mock schedule (unlocked preview)
+    if (isActive && !hasCompletedTutorial) {
+      // Tutorial is active - mock schedule is already showing via effect
+      return;
+    }
+    
+    // AFTER TUTORIAL / NORMAL MODE: Show settings reminder before scheduling
+    // Real schedule will be locked if user lacks task history
     setShowScheduleReminder(true);
   };
 
   const handleScheduleProceed = async () => {
     setShowScheduleReminder(false);
     if (!user || schedulingLoading) return;
+    
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    
+    // DURING TUTORIAL: Don't generate real schedule yet
+    if (isActive && !hasCompletedTutorial) {
+      return; // Tutorial shows mock schedule only
+    }
+    
+    // AFTER TUTORIAL: Generate real schedule (locked by history requirement)
     setSchedulingLoading(true);
     setScheduleError(null);
     try {
@@ -741,6 +888,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       setActiveTab('scheduler');
     } catch (err) {
       if (err instanceof NotEnoughHistoryError) {
+        // LOCK: Require 6 completed tasks before allowing real schedule
         setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${err.count}.`);
         setActiveTab('scheduler');
       } else {
@@ -754,6 +902,12 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
   const handleScheduleGoToSettings = () => {
     setShowScheduleReminder(false);
     setActiveTab('settings');
+    
+    // Auto-advance tutorial to next step when user clicks "Go to Settings"
+    const { isActive, hasCompletedTutorial } = useTutorialStore.getState();
+    if (isActive && !hasCompletedTutorial) {
+      useTutorialStore.getState().nextStep();
+    }
   };
 
   const handleAllTasksClick = () => {
@@ -862,7 +1016,12 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
             />
           ) : activeTab === 'scheduler' ? (
             <div className="tasks-page-enter">
-              <AISchedulerPage notEnoughDataMessage={scheduleError} selectedTaskId={selectedTaskId} />
+              <AISchedulerPage 
+                notEnoughDataMessage={
+                  useTutorialStore.getState().isActive ? null : scheduleError
+                } 
+                selectedTaskId={selectedTaskId} 
+              />
             </div>
           ) : activeTab === 'settings' ? (
             <SettingsPage />
@@ -918,10 +1077,10 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       )}
 
       {/* AI Schedule Modal */}
-      {aiScheduleResult && (
+      {aiScheduleResult && showAIScheduleModal && (
         <AIScheduleModal
           result={aiScheduleResult}
-          onClose={() => setAIScheduleResult(null)}
+          onClose={() => setShowAIScheduleModal(false)}
         />
       )}
 

@@ -25,31 +25,31 @@ export const TOUR_STEPS: TutorialStep[] = [
     page: 'tasks',
   },
 
-  // Step 3: Click AI Schedule Button
+  // Step 3: Create Task Form
   {
-    id: 'dashboard-ai-schedule-button',
-    targetSelector: '[data-tour="ai-schedule-button"]',
-    title: '✨ Generate Your Personalized Schedule',
+    id: 'task-form-creation',
+    targetSelector: '[data-tour="task-form-container"]',
+    title: '📋 Fill In Your Task Details',
     message:
-      'Once you\'ve added a few tasks, click here to let the AI work its magic! The system will analyze your tasks and create a smart schedule. For example, if your Friday deadline task is marked as "High Priority," the AI will schedule it earlier in your week to give you time to complete it.',
-    position: 'bottom',
-    highlightPadding: 2,
-    page: 'dashboard',
+      'Here\'s the task creation form! Fill in the essentials: Title (e.g., "Complete quarterly report"), add a description if needed, pick a category (Work, Personal, Health, etc.), and set Urgency & Importance levels. The AI uses these to prioritize your schedule. For example, "Fix critical bug" would be High urgency + High importance, while "Organize desk" might be Low/Low.',
+    position: 'left',
+    highlightPadding: 8,
+    page: 'tasks',
   },
 
-  // Step 3.5: Task Action Buttons
+  // Step 4: Task Action Buttons (moved from Step 5)
   {
     id: 'task-action-buttons',
-    targetSelector: '[data-tour="task-todo-card"]',
+    targetSelector: '[data-tour="task-play-button"]',
     title: '▶️ Start Working on Your Task',
     message:
       'Click the play button to start a task. When you click it, the task status changes from "To Do" to "In Progress." As you work on tasks and mark them complete, the AI learns your actual work pace and patterns. It\'s like having a personal assistant that learns how you work over time!',
     position: 'bottom',
-    highlightPadding: 10,
+    highlightPadding: 6,
     page: 'tasks',
   },
 
-  // Step 4: AI Schedule Reminder - Go to Settings
+  // Step 5: AI Schedule Reminder - Go to Settings (moved from Step 6)
   {
     id: 'ai-schedule-reminder-modal',
     targetSelector: '[data-tour="ai-schedule-go-to-settings"]',
@@ -61,7 +61,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     page: 'dashboard',
   },
 
-  // Step 5: Work Schedule Settings
+  // Step 6: Work Schedule Settings (moved from Step 7)
   {
     id: 'settings-work-schedule',
     targetSelector: '[data-tour="work-schedule"]',
@@ -73,7 +73,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     page: 'settings',
   },
 
-  // Step 6: Wellbeing & AI Behavior Settings
+  // Step 7: Wellbeing & AI Behavior Settings (moved from Step 8)
   {
     id: 'settings-wellbeing-ai-behavior',
     targetSelector: '[data-tour="wellbeing-ai-behavior"]',
@@ -85,7 +85,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     page: 'settings',
   },
 
-  // Step 7: Click Continue Button
+  // Step 8: Click Continue Button
   {
     id: 'ai-schedule-reminder-continue',
     targetSelector: '[data-tour="ai-schedule-continue-button"]',
@@ -97,74 +97,86 @@ export const TOUR_STEPS: TutorialStep[] = [
     page: 'dashboard',
   },
 
-  // Step 8: Best Productivity Hours
+  // Step 9: Click AI Schedule Button
+  {
+    id: 'dashboard-ai-schedule-button',
+    targetSelector: '[data-tour="ai-generated-schedule-modal"]',
+    title: 'AI Generated Schedule',
+    message:
+      'Click here to see a preview of how the AI Scheduler works! You\'ll see your task intelligently scheduled with confidence scores and reasoning. For example, if your task is marked as "High Priority," the AI will schedule it during your peak productivity hours. After the tutorial, you can configure your work preferences in Settings to get even smarter scheduling!',
+    position: 'left',
+    highlightPadding: 2,
+    page: 'dashboard',
+  },
+
+  // Step 10: Best Productivity Hours (moved from Step 9)
   {
     id: 'scheduler-best-hours',
     targetSelector: '[data-tour="scheduler-best-hours"]',
     title: '⭐ Your Power Hours',
     message:
       'Here\'s a cool insight from the AI! For example, you might see: 10:00 AM - 11:30 AM (94% success rate) and 2:00 PM - 3:30 PM (87% success rate). These are your "power hours" when you consistently finish tasks fastest. The AI will schedule your most important work here so you finish strong!',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 10,
     page: 'scheduler',
   },
 
-  // Step 9: Lowest Productivity Hours
+  // Step 11: Lowest Productivity Hours
   {
     id: 'scheduler-lowest-hours',
     targetSelector: '[data-tour="scheduler-lowest-hours"]',
     title: '🚫 Your Challenging Times',
     message:
       'The AI also learns when you struggle. Sample times might look like: 4:00 PM - 5:30 PM (45% success rate) or 1:00 PM - 2:00 PM (38% success rate). Instead of forcing important work into these low-energy times, the AI schedules lighter tasks here. This keeps you feeling good and prevents burnout!',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 10,
     page: 'scheduler',
   },
 
-  // Step 10: Confidence Percentage
+  // Step 12: Confidence Percentage
   {
     id: 'scheduler-confidence-score',
     targetSelector: '[data-tour="scheduler-confidence-score"]',
     title: '📊 AI Confidence Score',
     message:
-      'See this percentage? It\'s the AI\'s confidence in its recommendation! For example: "Complete Project Report" might show 92% (high priority + morning availability), while "Code Review" shows 61% (low priority, flexible deadline). Higher scores mean the AI really understands your patterns. As you complete more tasks, these scores increase!',
-    position: 'bottom',
-    highlightPadding: 4,
+      'See this percentage? It\'s the AI\'s confidence in its recommendation. Higher scores mean the AI really understands your patterns. As you complete more tasks, these scores improve!',
+    position: 'left',
+    highlightPadding: 10,
     page: 'scheduler',
   },
 
-  // Step 11: Calendar View
+  // Step 13: Calendar View (moved from Step 13)
   {
     id: 'calendar-view',
     targetSelector: '[data-tour="calendar-grid"]',
     title: '📅 Your Visual Schedule',
     message:
       'The Calendar view is your big-picture overview. You might see: Monday (2 moderate tasks), Tuesday (2 busy tasks), Wednesday (2 medium tasks), Thursday (1 light task), Friday (2 moderate tasks with deadline). It\'s perfect for planning ahead and making sure you\'re not overwhelmed on any single day!',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 12,
     page: 'calendar',
   },
 
-  // Step 12: Analytics Page
+  // Step 14: Analytics Page (moved from Step 14)
   {
     id: 'analytics-completion-chart',
     targetSelector: '[data-tour="analytics-page"]',
     title: '📈 Watch Your Growth',
     message:
       'This is where you see your success story! You might see: 76% completion rate (34 of 45 tasks), 85% on-time completion, 86% high-priority completion, and productivity growing from 72% → 76% → 81% → 85% over 4 weeks! These insights help you celebrate wins and make improvements.',
-    position: 'bottom',
+    position: 'left',
     highlightPadding: 12,
     page: 'analytics',
   },
 
-  // Step 13: Tutorial Help
+  // Step 15: Tutorial Help (moved from Step 15)
   {
     id: 'settings-redo-button',
     targetSelector: '[data-tour="redo-tutorial-button"]',
     title: '🎓 Keep Learning Anytime',
     message:
       'That\'s the complete tour! Don\'t worry if you want to revisit this walkthrough—you can always click the "Tutorial" button in the sidebar to start over. Whether you need a refresher or want to learn a feature you missed, the tutorial is here for you whenever you need it!',
-    position: 'top',
+    position: 'center',
     highlightPadding: 2,
     page: 'settings',
   },

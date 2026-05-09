@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useState } from 'react';
+import { TaskService } from '@/services/TaskService';
 import { TaskServiceWithNotifications } from '@/services/TaskServiceWithNotifications';
 import { Task } from '@/types';
 

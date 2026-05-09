@@ -41,10 +41,11 @@ const confidenceBg = (pct: number) => {
 interface AISchedulerPageProps {
   notEnoughDataMessage?: string | null;
   selectedTaskId?: string | null;
+  sampleData?: any;
 }
 
-const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage, selectedTaskId }) => {
-  const aiScheduleResult = useTaskStore((state) => state.getAIScheduleResult());
+const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage, selectedTaskId, sampleData }) => {
+  const aiScheduleResult = sampleData || useTaskStore((state) => state.getAIScheduleResult());
 
   // Scroll to selected task when it changes
   useEffect(() => {

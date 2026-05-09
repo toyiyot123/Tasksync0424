@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useTutorialStore, TutorialStep } from '@/store/tutorialStore';
+import { useTaskStore } from '@/store/taskStore';
 import './GuidedPathTutorial.css';
 
 interface ElementPosition {
@@ -12,11 +13,17 @@ interface ElementPosition {
 
 const GuidedPathTutorial: React.FC = () => {
   const { isActive, currentStepIndex, steps, nextStep, previousStep, skipTutorial, pageNavigator } = useTutorialStore();
+  const tasks = useTaskStore((state) => state.tasks);
   const [elementPosition, setElementPosition] = useState<ElementPosition | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const currentStep = steps[currentStepIndex];
+  
+  // Step 3 (index 2) requires at least 6 tasks to proceed
+  const isStep3 = currentStepIndex === 2;
+  const hasEnoughTasks = tasks.length >= 6;
+  const canProceedToStep4 = !isStep3 || hasEnoughTasks;
 
   // Navigate to the current step's page when tutorial starts or step changes
   useEffect(() => {
@@ -33,7 +40,7 @@ const GuidedPathTutorial: React.FC = () => {
     let retryCount = 0;
     const maxRetries = 50; // Try for up to 2.5 seconds
     const retryDelay = 50;
-    let timeoutId: NodeJS.Timeout;
+    let timeoutId: ReturnType<typeof setTimeout>;
 
     const updatePosition = () => {
       if (!isMounted) return;
@@ -218,7 +225,7 @@ const GuidedPathTutorial: React.FC = () => {
   return (
     <>
       {/* Dark Overlay */}
-      <div className="guided-path-overlay" onClick={skipTutorial} />
+      <div className="guided-path-overlay" />
 
       {/* Highlight Box with Pulsing Blue Arrow */}
       {elementPosition && (
@@ -299,9 +306,20 @@ const GuidedPathTutorial: React.FC = () => {
               </button>
             )}
 
+            {isStep3 && !hasEnoughTasks && (
+              <div className="text-sm font-medium text-slate-600">
+                Create {6 - tasks.length} more task{6 - tasks.length !== 1 ? 's' : ''} to proceed →
+              </div>
+            )}
+
             <button
               onClick={nextStep}
-              className="inline-flex items-center gap-1 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90 transition-opacity"
+              disabled={!canProceedToStep4}
+              className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all ${
+                canProceedToStep4
+                  ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:opacity-90'
+                  : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+              }`}
             >
               {currentStepIndex === total - 1 ? 'Finish' : 'Next'}
               {currentStepIndex < total - 1 && <ChevronRight className="h-4 w-4" />}
