@@ -144,7 +144,6 @@ async function getUserTasks(userId: string): Promise<ScheduledTask[]> {
 
 async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: number; users: number; errors: number }> {
   const users = await getUsers();
-  const now = new Date();
   const todayAtMidnight = new Date();
   todayAtMidnight.setHours(0, 0, 0, 0);
 
@@ -254,7 +253,6 @@ export const updateOverdueTasksStatus = functions.pubsub
     
     try {
       const users = await getUsers();
-      const now = new Date();
 
       for (const user of users) {
         try {

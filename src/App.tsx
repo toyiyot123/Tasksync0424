@@ -8,8 +8,6 @@ import { TaskService } from '@/services/TaskService';
 import { TaskLogService } from '@/services/TaskLogService';
 import { UserPerformanceService } from '@/services/UserPerformanceService';
 import { PriorityScoreService } from '@/services/PriorityScoreService';
-import { OverdueTaskService } from '@/services/OverdueTaskService';
-import { NearlyDueTaskService } from '@/services/NearlyDueTaskService';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
@@ -287,62 +285,12 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     void TaskScheduleService.syncUserSchedules(user.uid, tasks, currentSchedule);
   }, [user, tasks, currentSchedule]);
 
-  // Periodic check for overdue tasks every 5 minutes
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    const checkOverdueTasks = async () => {
-      try {
-        const state = useTaskStore.getState();
-        if (state.tasks.length > 0) {
-          const updated = await OverdueTaskService.updateOverdueTasksFromAppState(user.uid, state.tasks);
-          if (updated > 0) {
-            console.log(`[Periodic Check] Updated ${updated} tasks to overdue status`);
-          }
-        }
-      } catch (error) {
-        console.error('[Periodic Check] Error checking overdue tasks:', error);
-      }
-    };
-
-    // Run check immediately on mount, then every 5 minutes
-    checkOverdueTasks();
-    const interval = setInterval(checkOverdueTasks, 5 * 60 * 1000); // 5 minutes
-
-    return () => clearInterval(interval);
-  }, [user]);
-
-  // Periodic check for nearly-due tasks every 5 minutes (same as overdue)
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    const checkNearlyDueTasks = async () => {
-      try {
-        const state = useTaskStore.getState();
-        if (state.tasks.length > 0) {
-          // Get Firebase user for email fallback
-          const firebaseUser = auth.currentUser;
-          const userEmail = firebaseUser?.email || undefined;
-          const found = await NearlyDueTaskService.checkNearlyDueTasksFromAppState(user.uid, state.tasks, userEmail);
-          if (found > 0) {
-            console.log(`[Periodic Check] Found ${found} nearly-due tasks`);
-          }
-        }
-      } catch (error) {
-        console.error('[Periodic Check] Error checking nearly-due tasks:', error);
-      }
-    };
-
-    // Run check immediately on mount, then every 5 minutes
-    checkNearlyDueTasks();
-    const interval = setInterval(checkNearlyDueTasks, 5 * 60 * 1000); // 5 minutes
-
-    return () => clearInterval(interval);
-  }, [user]);
+  // NOTE: Automatic notification checks disabled
+  // Cloud Functions on Firebase handle email notifications automatically:
+  // - sendNearlyDueReminder: 9:00 AM UTC daily
+  // - sendOverdueAlert: 5:00 PM UTC daily  
+  // - updateOverdueTasksStatus: Every hour
+  // Using client-side checks caused duplicate emails on every app load.
 
   const mergeCategory = (category: TaskCategory | null) => {
     if (!category) {
