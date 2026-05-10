@@ -42,6 +42,7 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
   deletedAt?: Date; // Soft delete timestamp - task hidden but data preserved
+  isFromTutorial?: boolean; // Mark tasks created during tutorial mode for tracking
 }
 
 export interface TaskCategory {

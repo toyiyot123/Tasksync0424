@@ -8,6 +8,8 @@ import { TaskService } from '@/services/TaskService';
 import { TaskLogService } from '@/services/TaskLogService';
 import { UserPerformanceService } from '@/services/UserPerformanceService';
 import { PriorityScoreService } from '@/services/PriorityScoreService';
+import { NearlyDueTaskService } from '@/services/NearlyDueTaskService';
+import { OverdueTaskService } from '@/services/OverdueTaskService';
 import { auth, db } from './firebase';
 import { onAuthStateChanged, signOut, User } from 'firebase/auth';
 import { doc, getDoc, Timestamp } from 'firebase/firestore';
@@ -67,11 +69,24 @@ const applyCategoryLabels = (tasks: Task[], categories: TaskCategory[]): Task[] 
     };
   });
 
+const isNewFirebaseAccount = (firebaseUser: User): boolean => {
+  const createdAt = Date.parse(firebaseUser.metadata.creationTime || '');
+  const lastSignInAt = Date.parse(firebaseUser.metadata.lastSignInTime || '');
+
+  if (!Number.isFinite(createdAt) || !Number.isFinite(lastSignInAt)) {
+    return false;
+  }
+
+  return Math.abs(lastSignInAt - createdAt) <= 5 * 60 * 1000;
+};
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [taskCategories, setTaskCategories] = useState<TaskCategory[]>([]);
   const [firestoreUsername, setFirestoreUsername] = useState<string>('');
   const [authLoading, setAuthLoading] = useState(true);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
+  const [isNewUserTutorialEligible, setIsNewUserTutorialEligible] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | undefined>();
   const [filter, setFilter] = useState<FilterType>('all');
@@ -108,6 +123,8 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   // Prevents saving empty state before remote tasks finish loading.
   const tasksReadyRef = useRef(false);
+  const shouldResetTutorialTasksRef = useRef(false);
+  const didHandleTutorialCompletionRef = useRef(false);
 
   // Set up tutorial page navigator
   useEffect(() => {
@@ -117,9 +134,10 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     });
   }, []);
 
-  // Auto-start tutorial for first-time users
+  // Auto-start tutorial only for brand-new users after tasks have finished loading.
   useEffect(() => {
-    if (!authLoading && user && tasks.length === 0) {
+    const shouldShowTutorial = user && tasksLoaded && isNewUserTutorialEligible;
+    if (shouldShowTutorial) {
       // Use a small timeout to ensure tutorial store reset has completed
       const timeout = setTimeout(() => {
         const { hasCompletedTutorial, isActive, startTutorial } = useTutorialStore.getState();
@@ -129,7 +147,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       }, 100);
       return () => clearTimeout(timeout);
     }
-  }, [authLoading, user, tasks.length]);
+  }, [user, tasksLoaded, isNewUserTutorialEligible]);
 
 
   // Show reminder modal when tutorial reaches Step 4 or Step 7
@@ -178,7 +196,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     return () => unsubscribe();
   }, []);
 
-  // DURING TUTORIAL: Show mock AI schedule when tutorial reaches Step 9
+  // DURING TUTORIAL: Prepare mock AI schedule for scheduler walkthrough steps.
   // AFTER TUTORIAL: Mock schedule is cleared by separate effect below
   useEffect(() => {
     const handleTutorialAIScheduleChange = () => {
@@ -190,17 +208,17 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
         return;
       }
       
-      // SHOW MOCK: During tutorial at Step 9 when user has tasks
-      if (isActive && currentStep?.id === 'dashboard-ai-schedule-button' && tasks.length > 0) {
+      // SHOW MOCK: During scheduler tutorial steps when user has example tasks.
+      if (isActive && currentStep?.page === 'scheduler' && tasks.length > 0) {
         const mockSchedule = generateMockAISchedule(tasks);
         setAIScheduleResult(mockSchedule);
         setStoreAIScheduleResult(mockSchedule);
-        setShowAIScheduleModal(true);
+        setShowAIScheduleModal(false);
         return;
       }
       
-      // KEEP MOCK ON SCHEDULER PAGE: Tutorial at Step 10+ - keep showing schedule, just hide modal
-      if (isActive && currentStep?.id !== 'dashboard-ai-schedule-button' && !hasCompletedTutorial) {
+      // Hide the modal overlay during tutorial steps outside the removed schedule preview step.
+      if (isActive && !hasCompletedTutorial) {
         setShowAIScheduleModal(false); // Hide modal overlay but keep schedule data visible
         return;
       }
@@ -219,30 +237,52 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     return () => unsubscribe();
   }, [tasks, aiScheduleResult]);
 
-  // When tutorial completes, clear mock schedule and show locked message only if needed
+  // When tutorial completes: delete tutorial tasks and handle AI schedule lock
   useEffect(() => {
     const unsubscribe = useTutorialStore.subscribe((state) => {
-      if (state.hasCompletedTutorial && aiScheduleResult && aiScheduleResult.insights.totalRecords <= 0) {
-        const completedCount = tasks.filter(t => t.status === 'completed').length;
+      if (state.hasCompletedTutorial && !didHandleTutorialCompletionRef.current) {
+        didHandleTutorialCompletionRef.current = true;
+
+        const shouldResetTasks = shouldResetTutorialTasksRef.current;
+        const latestTasks = useTaskStore.getState().tasks;
+        const tutorialTasks = latestTasks.filter(t => t.isFromTutorial);
+        const realTasks = latestTasks.filter(t => !t.isFromTutorial);
+        const visibleTasksAfterTutorial = shouldResetTasks ? [] : realTasks;
+        const tasksToHide = shouldResetTasks ? latestTasks : tutorialTasks;
+        const realCompletedCount = visibleTasksAfterTutorial.filter(t => t.status === 'completed').length;
+
+        if (shouldResetTasks) {
+          setTasks([]);
+        }
+
+        tasksToHide.forEach(taskToHide => {
+          // Soft delete from Firestore (preserve for analysis but hide from user)
+          TaskService.softDeleteTask(taskToHide.id).catch(e =>
+            console.warn('Error soft-deleting tutorial task:', e)
+          );
+        });
+        
         setAIScheduleResult(null);
         setStoreAIScheduleResult(null);
         setShowAIScheduleModal(false);
-        // Only show locked message if user doesn't have enough completed tasks
-        if (completedCount < 6) {
-          setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
+        
+        // Lock AI Schedule after tutorial until the user has enough real completed task history.
+        if (realCompletedCount < 6) {
+          setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${realCompletedCount}.`);
         }
       }
     });
     
     return () => unsubscribe();
-  }, [aiScheduleResult, tasks]);
+  }, [setStoreAIScheduleResult, setTasks, tasks]);
 
-  // When page loads after tutorial, show locked message only if user doesn't have enough tasks
+  // When page loads after tutorial, show locked message only if user doesn't have enough real tasks
   useEffect(() => {
     const { hasCompletedTutorial, isActive } = useTutorialStore.getState();
     // Only show locked message if tutorial is NOT active AND tutorial is completed AND no schedule AND no error set
     if (!isActive && hasCompletedTutorial && !aiScheduleResult && !scheduleError) {
-      const completedCount = tasks.filter(t => t.status === 'completed').length;
+      const realTasks = tasks.filter(t => !t.isFromTutorial);
+      const completedCount = realTasks.filter(t => t.status === 'completed').length;
       if (completedCount < 6) {
         setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
       }
@@ -251,7 +291,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     if (isActive && scheduleError) {
       setScheduleError(null);
     }
-  }, []);
+  }, [tasks, aiScheduleResult, scheduleError]);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -310,6 +350,10 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
         tasksReadyRef.current = false;
+        setTasksLoaded(false);
+        setIsNewUserTutorialEligible(false);
+        shouldResetTutorialTasksRef.current = false;
+        didHandleTutorialCompletionRef.current = false;
         setActiveTab('dashboard');
         clearTasks();
         setAIScheduleResult(null);
@@ -319,8 +363,9 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       }
       setUser(firebaseUser);
       if (firebaseUser) {
-        // Reset tutorial for each new user login so they see it fresh
-        useTutorialStore.getState().resetTutorial();
+        setIsNewUserTutorialEligible(false);
+        shouldResetTutorialTasksRef.current = false;
+        didHandleTutorialCompletionRef.current = false;
         
         try {
           const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
@@ -357,6 +402,14 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           const firestoreTasks = await TaskService.getUserTasks(firebaseUser.uid);
           // Filter out soft-deleted tasks (those with deleted_at timestamp)
           const activeTasks = firestoreTasks.filter(task => !task.deleted_at);
+          const shouldRunNewUserTutorial = isNewFirebaseAccount(firebaseUser) && activeTasks.length === 0;
+          setIsNewUserTutorialEligible(shouldRunNewUserTutorial);
+          shouldResetTutorialTasksRef.current = shouldRunNewUserTutorial;
+
+          if (shouldRunNewUserTutorial) {
+            useTutorialStore.getState().resetTutorial();
+          }
+
           const convertedTasks = activeTasks.map(task => TaskService.firestoreToTask(task));
           const normalizedTasks = applyCategoryLabels(convertedTasks, taskCategories);
           const schedules = await TaskScheduleService.getUserSchedules(firebaseUser.uid);
@@ -555,9 +608,11 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           }
 
           tasksReadyRef.current = true;
+          setTasksLoaded(true);
         } catch (e) {
           console.warn('Failed to load user profile/tasks from Firestore:', e);
           tasksReadyRef.current = true;
+          setTasksLoaded(true);
         }
       } else {
         setFirestoreUsername('');
@@ -657,6 +712,8 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     } else {
       // Create new task in Firestore first so the task document ID becomes the canonical task_id.
       try {
+        const isTutorialTask = useTutorialStore.getState().isActive;
+
         const firestoreTaskId = await TaskService.createTask(user.uid, {
           title: taskData.title || '',
           description: taskData.description || '',
@@ -665,6 +722,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           due_at: Timestamp.fromDate(new Date(taskData.dueDate || new Date())),
           category_id: normalizedCategoryId,
           estimated_time: taskData.estimatedTime || 30,
+          is_tutorial: isTutorialTask,
         });
 
         const newTask: Task = {
@@ -685,6 +743,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           subtasks: [],
           createdAt: new Date(),
           updatedAt: new Date(),
+          isFromTutorial: isTutorialTask, // Mark if created during active tutorial
         };
 
         addTask(newTask);
@@ -700,13 +759,28 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
         console.error('Error saving task to Firestore:', error);
       }
     }
-    setShowForm(false);
     
-    // Auto-advance tutorial when task is created during step 3
+    // Handle tutorial progression: STEP 3 requires creating 6 tasks before advancing to STEP 4
     const { isActive, currentStepIndex, steps, nextStep } = useTutorialStore.getState();
     const currentStep = steps[currentStepIndex];
+    
     if (isActive && currentStep?.id === 'task-form-creation') {
-      nextStep();
+      // Get all tutorial tasks created so far
+      const allTasks = getTasks();
+      const createdTutorialTasks = allTasks.filter(
+        t => t.isFromTutorial
+      ).length;
+      
+      // Only proceed to step 4 if 6 tasks are created, otherwise form stays open
+      if (createdTutorialTasks >= 6) {
+        setShowForm(false);
+        nextStep();
+      } else {
+        // Keep form open, don't close it
+        setShowForm(true);
+      }
+    } else {
+      setShowForm(false);
     }
   };
 
@@ -746,6 +820,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
 
   const handleStatusChange = async (id: string, status: Task['status']) => {
     updateTask(id, { status });
+    
     // Also update in Firestore
     try {
       await TaskService.updateTaskStatus(id, status);
@@ -820,6 +895,12 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     
     // DURING TUTORIAL: Don't generate real schedule yet
     if (isActive && !hasCompletedTutorial) {
+      if (tasks.length > 0) {
+        const mockSchedule = generateMockAISchedule(tasks);
+        setAIScheduleResult(mockSchedule);
+        setStoreAIScheduleResult(mockSchedule);
+      }
+      useTutorialStore.getState().nextStep();
       return; // Tutorial shows mock schedule only
     }
     

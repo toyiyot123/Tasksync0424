@@ -107,16 +107,16 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
         </p>
       </div>
 
-      {/* 2-week scheduling limit notice */}
+      {/* Scheduling limit notice */}
       <div className="tasks-page-section bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-        <span className="text-amber-500 text-lg leading-none mt-0.5">⚠️</span>
+        <span className="text-amber-500 text-lg leading-none mt-0.5">ℹ️</span>
         <div className="text-sm text-amber-800">
-          <span className="font-semibold">Scheduling limit: 2 weeks.</span> Only tasks due within the next 14 days (plus overdue tasks) are included in this schedule. Tasks with due dates beyond 2 weeks will not appear here — regenerate the schedule closer to their due date.
+          <span className="font-semibold">Scheduling scope: Today and Tomorrow.</span> AI generates tasks due today, tomorrow, and overdue tasks only. Future tasks beyond tomorrow must be added manually or regenerate the schedule closer to their due date.
         </div>
       </div>
 
       {/* Insights */}
-      {insights.totalRecords > 0 ? (
+      {insights.bestHours.length > 0 ? (
         <div className="tasks-page-section bg-indigo-50 border border-indigo-100 rounded-xl p-6 space-y-4">
           <div className="flex items-center gap-2 text-indigo-700 font-semibold">
             <Zap className="w-5 h-5" />

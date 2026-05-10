@@ -126,14 +126,57 @@
     max-width: calc(100vw - 32px);
     min-width: auto;
     padding: 16px;
+    font-size: 14px;
+  }
+
+  .guided-path-tooltip-mobile {
+    max-height: min(36vh, 260px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .guided-path-tooltip h3 {
+    font-size: 16px;
+  }
+
+  .guided-path-tooltip p {
+    font-size: 13px;
   }
 
   .guided-path-arrow {
     bottom: -35px;
+    width: 36px;
+    height: 36px;
   }
 
   .guided-path-highlight {
     border-width: 2px;
+  }
+
+  body.guided-path-mobile-active aside[class*="fixed"],
+  body.guided-path-mobile-active button[class*="bg-black/20"] {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  body.guided-path-mobile-task-form-creation [data-tour="task-form-container"] {
+    max-height: 58vh;
+    transform: translateY(-18vh);
+  }
+
+  body.guided-path-mobile-settings-work-schedule [data-tour="work-schedule"] {
+    margin-bottom: 38vh;
+  }
+
+  body.guided-path-mobile-settings-wellbeing-ai-behavior [data-tour="wellbeing-ai-behavior"],
+  body.guided-path-mobile-ai-schedule-reminder-continue [data-tour="ai-schedule-continue-button"],
+  body.guided-path-mobile-scheduler-best-hours [data-tour="scheduler-best-hours"],
+  body.guided-path-mobile-scheduler-lowest-hours [data-tour="scheduler-lowest-hours"],
+  body.guided-path-mobile-scheduler-confidence-score [data-tour="scheduler-confidence-score"],
+  body.guided-path-mobile-calendar-view [data-tour="calendar-grid"],
+  body.guided-path-mobile-analytics-completion-chart [data-tour="analytics-page"],
+  body.guided-path-mobile-settings-redo-button [data-tour="redo-tutorial-button"] {
+    margin-top: 38vh;
   }
 }
 
@@ -141,6 +184,19 @@
   .guided-path-tooltip {
     max-width: calc(100vw - 24px);
     padding: 14px;
+    font-size: 13px;
+  }
+
+  .guided-path-tooltip-mobile {
+    max-height: min(34vh, 230px);
+  }
+
+  .guided-path-tooltip h3 {
+    font-size: 15px;
+  }
+
+  .guided-path-tooltip p {
+    font-size: 12px;
   }
 
   .guided-path-arrow {
@@ -148,9 +204,28 @@
     height: 32px;
   }
 
+  .guided-path-arrow svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  /* Ensure tooltip doesn't exceed viewport on very small screens */
+  .guided-path-tooltip .flex {
+    flex-direction: column;
+  }
+
+  .guided-path-tooltip button {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
   .guided-path-highlight {
     border-radius: 8px;
     border-width: 2px;
+  }
+
+  body.guided-path-mobile-task-form-creation [data-tour="task-form-container"] {
+    max-height: 56vh;
+    transform: translateY(-19vh);
   }
 }
 

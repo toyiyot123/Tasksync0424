@@ -1,7 +1,6 @@
 import React from 'react';
 import { X, Sparkles, Clock, TrendingUp, TrendingDown, CheckCircle, AlertCircle, Zap } from 'lucide-react';
 import { AIScheduleResult } from '@/services/AIScheduleService';
-import { useTutorialStore } from '@/store/tutorialStore';
 
 interface AIScheduleModalProps {
   result: AIScheduleResult;
@@ -36,15 +35,9 @@ const confidenceBg = (pct: number) => {
 
 const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) => {
   const { schedule, insights, generatedAt } = result;
-  const { isActive, currentStepIndex, steps, nextStep } = useTutorialStore();
-  const currentStep = steps[currentStepIndex];
 
   const handleClose = () => {
     onClose();
-    // If tutorial is active at Step 9, advance to Step 10 when closing the modal
-    if (isActive && currentStep?.id === 'dashboard-ai-schedule-button') {
-      nextStep();
-    }
   };
 
   return (

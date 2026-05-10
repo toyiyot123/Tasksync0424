@@ -35,7 +35,7 @@ export const notify = functions.https.onRequest(async (req, res) => {
 
   try {
     const mode = (req.query.mode as string) || 'nearly-due';
-    
+
     if (mode !== 'nearly-due' && mode !== 'overdue') {
       res.status(400).json({ error: 'Invalid mode parameter. Use "nearly-due" or "overdue"' });
       return;

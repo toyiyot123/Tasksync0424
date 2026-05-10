@@ -97,19 +97,7 @@ export const TOUR_STEPS: TutorialStep[] = [
     page: 'dashboard',
   },
 
-  // Step 9: Click AI Schedule Button
-  {
-    id: 'dashboard-ai-schedule-button',
-    targetSelector: '[data-tour="ai-generated-schedule-modal"]',
-    title: 'AI Generated Schedule',
-    message:
-      'Click here to see a preview of how the AI Scheduler works! You\'ll see your task intelligently scheduled with confidence scores and reasoning. For example, if your task is marked as "High Priority," the AI will schedule it during your peak productivity hours. After the tutorial, you can configure your work preferences in Settings to get even smarter scheduling!',
-    position: 'left',
-    highlightPadding: 2,
-    page: 'dashboard',
-  },
-
-  // Step 10: Best Productivity Hours (moved from Step 9)
+  // Step 9: Best Productivity Hours
   {
     id: 'scheduler-best-hours',
     targetSelector: '[data-tour="scheduler-best-hours"]',

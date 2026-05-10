@@ -1,4 +1,5 @@
 import * as functions from 'firebase-functions/v1';
+import * as functionsConfig from 'firebase-functions';
 import * as admin from 'firebase-admin';
 
 if (!admin.apps.length) {
@@ -8,12 +9,33 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 const EMAILJS_API_URL = 'https://api.emailjs.com/api/v1.0/email/send';
-const EMAILJS_SERVICE_ID = process.env.EMAILJS_SERVICE_ID || 'service_mjgbtih';
-const EMAILJS_NEARLY_DUE_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || 'template_4dxvv8d';
-const EMAILJS_OVERDUE_TEMPLATE_ID = process.env.EMAILJS_OVERDUE_TEMPLATE_ID || 'template_ztabchb';
-const EMAILJS_PUBLIC_KEY = process.env.EMAILJS_PUBLIC_KEY || '9Dw-9GkNwVvoLmb1q';
-const APP_LINK = process.env.FRONTEND_URL || 'https://tasksync-70aa9.web.app';
 const NOTIFICATION_TIME_ZONE = 'Asia/Manila';
+
+// Helper to get EmailJS config at runtime
+function getEmailJSConfig() {
+  try {
+    const runtimeConfig = (functionsConfig as any).config();
+    const emailjs = runtimeConfig.emailjs || {};
+    const frontend = runtimeConfig.frontend || {};
+
+    return {
+      serviceId: process.env.EMAILJS_SERVICE_ID || emailjs.service_id || 'service_mjgbtih',
+      nearlyDueTemplateId: process.env.EMAILJS_TEMPLATE_ID || emailjs.template_id || 'template_4dxvv8d',
+      overdueTemplateId: process.env.EMAILJS_OVERDUE_TEMPLATE_ID || emailjs.overdue_template_id || 'template_ztabchb',
+      publicKey: process.env.EMAILJS_PUBLIC_KEY || emailjs.public_key || '9Dw-9GkNwVvoLmb1q',
+      appLink: process.env.FRONTEND_URL || frontend.url || 'https://tasksync-70aa9.web.app'
+    };
+  } catch (error) {
+    console.warn('Failed to get config, using defaults:', error);
+    return {
+      serviceId: 'service_mjgbtih',
+      nearlyDueTemplateId: 'template_4dxvv8d',
+      overdueTemplateId: 'template_ztabchb',
+      publicKey: '9Dw-9GkNwVvoLmb1q',
+      appLink: 'https://tasksync-70aa9.web.app'
+    };
+  }
+}
 
 type FirestoreDateValue = admin.firestore.Timestamp | string | Date;
 
@@ -128,17 +150,18 @@ async function sendEmailWithEmailJS(
 
   const taskListHTML = `<tbody>${taskRows}</tbody>`;
 
+  const config = getEmailJSConfig();
   const payload = {
-    service_id: EMAILJS_SERVICE_ID,
+    service_id: config.serviceId,
     template_id: templateId,
-    user_id: EMAILJS_PUBLIC_KEY,
+    user_id: config.publicKey,
     template_params: {
       to_email: toEmail,
       user_name: toName,
       subject: subject,
       task_count: String(tasks.length),
       tasks_list: taskListHTML,
-      app_link: APP_LINK,
+      app_link: config.appLink,
     },
   };
 
@@ -235,9 +258,11 @@ export async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{
       const subject = mode === 'nearly-due'
         ? `TaskSync Reminder: ${matchingTasks.length} task(s) due in 24 hours`
         : `TaskSync Alert: ${matchingTasks.length} overdue task(s)`;
+      
+      const config = getEmailJSConfig();
       const templateId = mode === 'nearly-due'
-        ? EMAILJS_NEARLY_DUE_TEMPLATE_ID
-        : EMAILJS_OVERDUE_TEMPLATE_ID;
+        ? config.nearlyDueTemplateId
+        : config.overdueTemplateId;
 
       await sendEmailWithEmailJS(
         user.email,
@@ -318,13 +343,14 @@ export const sendNearlyDueOnTaskCreate = functions.firestore
     }
 
     const toName = user.displayName || user.name || 'TaskSync User';
+    const config = getEmailJSConfig();
 
     await sendEmailWithEmailJS(
       user.email,
       toName,
       'TaskSync Reminder: 1 task due in 24 hours',
       [task],
-      EMAILJS_NEARLY_DUE_TEMPLATE_ID
+      config.nearlyDueTemplateId
     );
 
     console.log(`sendNearlyDueOnTaskCreate sent task=${task.id} user=${task.user_id}`);

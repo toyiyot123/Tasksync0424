@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { X, ChevronRight, ChevronLeft } from 'lucide-react';
-import { useTutorialStore, TutorialStep } from '@/store/tutorialStore';
+import { useTutorialStore } from '@/store/tutorialStore';
 import { useTaskStore } from '@/store/taskStore';
 import './GuidedPathTutorial.css';
 
@@ -16,14 +16,67 @@ const GuidedPathTutorial: React.FC = () => {
   const tasks = useTaskStore((state) => state.tasks);
   const [elementPosition, setElementPosition] = useState<ElementPosition | null>(null);
   const [tooltipPosition, setTooltipPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   const currentStep = steps[currentStepIndex];
+  const mobileTooltipMode = isMobile && currentStep ? `guided-path-mobile-${currentStep.id}` : '';
   
-  // Step 3 (index 2) requires at least 6 tasks to proceed
-  const isStep3 = currentStepIndex === 2;
-  const hasEnoughTasks = tasks.length >= 6;
-  const canProceedToStep4 = !isStep3 || hasEnoughTasks;
+  // Step 3 loops task creation until 6 tutorial tasks exist.
+  const isStep3 = currentStep?.id === 'task-form-creation';
+  const tutorialTasks = tasks.filter(t => t.isFromTutorial);
+  const createdTutorialTasks = tutorialTasks.length;
+  const hasCreatedSixTutorialTasks = createdTutorialTasks >= 6;
+  const canProceedToStep4 = !isStep3 || hasCreatedSixTutorialTasks;
+  
+  // Track mobile viewport
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isActive || !currentStep || !isMobile) return;
+
+    document.body.classList.add('guided-path-mobile-active', mobileTooltipMode);
+
+    return () => {
+      document.body.classList.remove('guided-path-mobile-active', mobileTooltipMode);
+    };
+  }, [isActive, currentStep, isMobile, mobileTooltipMode]);
+  
+  // Hide sidebar on mobile during tutorial
+  useEffect(() => {
+    if (isActive && isMobile) {
+      // Close sidebar on mobile during tutorial
+      const sidebar = document.querySelector('aside[class*="fixed"]') as HTMLElement;
+      const sidebarBackdrop = document.querySelector('button[class*="bg-black/20"]') as HTMLElement;
+
+      if (sidebar && window.innerWidth < 768) {
+        sidebar.style.visibility = 'hidden';
+        sidebar.style.pointerEvents = 'none';
+      }
+      if (sidebarBackdrop && window.innerWidth < 768) {
+        sidebarBackdrop.style.visibility = 'hidden';
+        sidebarBackdrop.style.pointerEvents = 'none';
+      }
+    }
+    return () => {
+      const sidebar = document.querySelector('aside[class*="fixed"]') as HTMLElement;
+      const sidebarBackdrop = document.querySelector('button[class*="bg-black/20"]') as HTMLElement;
+      if (sidebar) {
+        sidebar.style.visibility = 'visible';
+        sidebar.style.pointerEvents = 'auto';
+      }
+      if (sidebarBackdrop) {
+        sidebarBackdrop.style.visibility = 'visible';
+        sidebarBackdrop.style.pointerEvents = 'auto';
+      }
+    };
+  }, [isActive, isMobile]);
 
   // Navigate to the current step's page when tutorial starts or step changes
   useEffect(() => {
@@ -139,16 +192,16 @@ const GuidedPathTutorial: React.FC = () => {
     };
   }, [isActive, currentStep]);
 
-  // Position tooltip to avoid going off-screen with perfect edge alignment
+  // Position tooltip to avoid going off-screen with mobile-aware positioning
   useEffect(() => {
     if (!elementPosition || !tooltipRef.current) return;
 
     const tooltip = tooltipRef.current;
     const tooltipRect = tooltip.getBoundingClientRect();
-    const position = currentStep?.position || 'bottom';
+    let position = currentStep?.position || 'bottom';
     
-    const screenPadding = 16; // Minimum distance from screen edges
-    const gap = 16; // Gap between highlight and tooltip
+    const screenPadding = isMobile ? 12 : 16;
+    const gap = isMobile ? 12 : 16;
 
     let top = 0;
     let left = 0;
@@ -166,12 +219,54 @@ const GuidedPathTutorial: React.FC = () => {
     const spaceLeft = elementPosition.left;
     const spaceRight = window.innerWidth - highlightRight;
 
-    // Try to position bottom by default
+    // Mobile-specific adjustments
     let preferredPosition = position;
-    const tooltipWidth = Math.max(tooltipRect.width, 280);
+    const tooltipWidth = Math.min(Math.max(tooltipRect.width, 260), isMobile ? window.innerWidth - 24 : 380);
     const tooltipHeight = Math.max(tooltipRect.height, 100);
 
+    if (isMobile && currentStep) {
+      const mobileBottomSteps = new Set([
+        'task-form-creation',
+        'settings-work-schedule',
+      ]);
+
+      const mobileTopSteps = new Set([
+        'settings-wellbeing-ai-behavior',
+        'ai-schedule-reminder-continue',
+        'scheduler-best-hours',
+        'scheduler-lowest-hours',
+        'scheduler-confidence-score',
+        'calendar-view',
+        'analytics-completion-chart',
+        'settings-redo-button',
+      ]);
+
+      if (mobileBottomSteps.has(currentStep.id)) {
+        setTooltipPosition({
+          top: window.innerHeight - tooltipHeight - screenPadding,
+          left: (window.innerWidth - tooltipWidth) / 2,
+        });
+        return;
+      }
+
+      if (mobileTopSteps.has(currentStep.id)) {
+        setTooltipPosition({
+          top: screenPadding,
+          left: (window.innerWidth - tooltipWidth) / 2,
+        });
+        return;
+      }
+    }
+
     // Smart position selection based on available space
+    // For mobile, prefer bottom first, then top, then center
+    if (isMobile) {
+      if (preferredPosition === 'left' || preferredPosition === 'right') {
+        preferredPosition = spaceBottom > tooltipHeight + gap + screenPadding ? 'bottom' : 'top';
+      }
+    }
+
+    // Smart fallback if preferred position doesn't fit
     if (preferredPosition === 'bottom' && spaceBottom < tooltipHeight + gap + screenPadding) {
       preferredPosition = 'top';
     }
@@ -215,7 +310,7 @@ const GuidedPathTutorial: React.FC = () => {
     top = Math.max(screenPadding, Math.min(top, window.innerHeight - tooltipHeight - screenPadding));
 
     setTooltipPosition({ top, left });
-  }, [elementPosition, currentStep?.position]);
+  }, [elementPosition, currentStep, isMobile]);
 
   if (!isActive || !currentStep) return null;
 
@@ -260,7 +355,7 @@ const GuidedPathTutorial: React.FC = () => {
       {/* White Tooltip Bubble */}
       <div
         ref={tooltipRef}
-        className="guided-path-tooltip"
+        className={`guided-path-tooltip ${isMobile ? 'guided-path-tooltip-mobile' : ''}`}
         style={{
           top: tooltipPosition.top,
           left: tooltipPosition.left,
@@ -280,6 +375,18 @@ const GuidedPathTutorial: React.FC = () => {
         <p className="text-sm text-slate-600 mb-4 leading-relaxed">
           {currentStep.message}
         </p>
+
+        {/* Step 3 Progress: Show created task count */}
+        {isStep3 && (
+          <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <p className="text-sm font-semibold text-blue-900">
+              Create 6 Tasks: {Math.min(createdTutorialTasks, 6)}/6
+            </p>
+            <p className="text-xs text-blue-700 mt-1">
+              The form will stay open until you create all 6 tutorial tasks.
+            </p>
+          </div>
+        )}
 
         {/* Progress Bar */}
         <div className="mb-4 h-1 bg-slate-200 rounded-full overflow-hidden">
@@ -306,9 +413,11 @@ const GuidedPathTutorial: React.FC = () => {
               </button>
             )}
 
-            {isStep3 && !hasEnoughTasks && (
+            {isStep3 && !hasCreatedSixTutorialTasks && (
               <div className="text-sm font-medium text-slate-600">
-                Create {6 - tasks.length} more task{6 - tasks.length !== 1 ? 's' : ''} to proceed →
+                {createdTutorialTasks === 0 
+                  ? 'Create your first task ->'
+                  : `${6 - createdTutorialTasks} more task${6 - createdTutorialTasks !== 1 ? 's' : ''} to create ->`}
               </div>
             )}
 

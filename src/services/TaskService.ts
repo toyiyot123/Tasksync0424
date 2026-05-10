@@ -24,6 +24,7 @@ export interface FirestoreTask {
   due_at: Timestamp;
   priority_manual: Task['priority'];
   estimated_time?: number;
+  is_tutorial?: boolean;
   created_at: Timestamp;
   updated_at: Timestamp;
   deleted_at?: Timestamp; // Soft delete - timestamp when task was deleted
@@ -59,7 +60,9 @@ export class TaskService {
     try {
       const tasksRef = collection(db, 'tasks');
       const q = query(tasksRef, where('user_id', '==', userId));
+      console.debug('[TaskService] getUserTasks query', { collection: 'tasks', filter: { user_id: userId } });
       const snapshot = await getDocs(q);
+      console.debug('[TaskService] getUserTasks snapshot size', snapshot.size);
 
       return snapshot.docs.map(doc => ({
         id: doc.id,
@@ -212,6 +215,7 @@ export class TaskService {
       createdAt: doc.created_at?.toDate?.() || new Date(),
       updatedAt: doc.updated_at?.toDate?.() || new Date(),
       deletedAt: doc.deleted_at?.toDate?.(),
+      isFromTutorial: doc.is_tutorial,
     };
   }
 
@@ -227,6 +231,7 @@ export class TaskService {
       status: task.status,
       due_at: Timestamp.fromDate(new Date(task.dueDate)),
       priority_manual: task.priority,
+      is_tutorial: task.isFromTutorial,
     };
   }
 }
