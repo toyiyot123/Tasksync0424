@@ -1,0 +1,29 @@
+# Ignore files that should not be deployed to Firebase Hosting
+.git
+.gitignore
+firebase-debug.log
+firebase-debug.*.log
+
+# Ignore local node_modules
+node_modules/
+
+# Ignore API folder (for Vercel)
+api/
+
+# Ignore source files (only deploy dist/)
+src/
+vite.config.ts
+vite.config.js
+tsconfig.json
+*.md
+.env
+.env.local
+functions/ (keep if deploying both hosting and functions)
+
+# Ignore dev dependencies and build artifacts
+.vite/
+.eslintignore
+.prettierignore
+package-lock.json
+vercel.json
+Procfile

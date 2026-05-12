@@ -1,0 +1,276 @@
+/* Dark Overlay */
+.guided-path-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  z-index: 40;
+  cursor: pointer;
+  animation: fadeIn 0.3s ease-in-out;
+  backdrop-filter: blur(2px);
+}
+
+/* Highlight Box with Perfect Edge Alignment */
+.guided-path-highlight {
+  position: fixed;
+  border: 3px solid #3b82f6;
+  border-radius: 12px;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1),
+    0 0 30px rgba(59, 130, 246, 0.5),
+    inset 0 0 30px rgba(59, 130, 246, 0.1);
+  z-index: 50;
+  animation: pulseGlow 2s ease-in-out infinite;
+  pointer-events: none;
+  will-change: box-shadow;
+}
+
+/* Pulsing Glow Animation */
+@keyframes pulseGlow {
+  0% {
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1),
+      0 0 20px rgba(59, 130, 246, 0.3),
+      inset 0 0 20px rgba(59, 130, 246, 0.05);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0.05),
+      0 0 40px rgba(59, 130, 246, 0.6),
+      inset 0 0 30px rgba(59, 130, 246, 0.15);
+  }
+  100% {
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1),
+      0 0 20px rgba(59, 130, 246, 0.3),
+      inset 0 0 20px rgba(59, 130, 246, 0.05);
+  }
+}
+
+/* Pulsing Blue Arrow */
+.guided-path-arrow {
+  position: absolute;
+  bottom: -45px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 51;
+  animation: bounceArrow 1.5s ease-in-out infinite;
+}
+
+.guided-path-arrow-icon {
+  filter: drop-shadow(0 2px 8px rgba(59, 130, 246, 0.4));
+  animation: arrowPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes bounceArrow {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateX(-50%) translateY(8px);
+    opacity: 0.7;
+  }
+}
+
+@keyframes arrowPulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 2px 8px rgba(59, 130, 246, 0.4));
+  }
+  50% {
+    filter: drop-shadow(0 4px 16px rgba(59, 130, 246, 0.7));
+  }
+}
+
+/* White Tooltip Bubble - Responsive with Perfect Alignment */
+.guided-path-tooltip {
+  position: fixed;
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 380px;
+  min-width: 280px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15),
+    0 10px 20px rgba(0, 0, 0, 0.1);
+  z-index: 60;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  animation: slideInTooltip 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, opacity;
+  contain: layout style paint;
+}
+
+@keyframes slideInTooltip {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Fade In Animation */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Mobile Responsive Design */
+@media (max-width: 768px) {
+  .guided-path-tooltip {
+    max-width: calc(100vw - 32px);
+    min-width: auto;
+    padding: 16px;
+    font-size: 14px;
+  }
+
+  .guided-path-tooltip-mobile {
+    max-height: min(36vh, 260px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .guided-path-tooltip h3 {
+    font-size: 16px;
+  }
+
+  .guided-path-tooltip p {
+    font-size: 13px;
+  }
+
+  .guided-path-arrow {
+    bottom: -35px;
+    width: 36px;
+    height: 36px;
+  }
+
+  .guided-path-highlight {
+    border-width: 2px;
+  }
+
+  body.guided-path-mobile-active aside[class*="fixed"],
+  body.guided-path-mobile-active button[class*="bg-black/20"] {
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+
+  body.guided-path-mobile-task-form-creation [data-tour="task-form-container"] {
+    max-height: 58vh;
+  }
+}
+
+@media (max-width: 480px) {
+  .guided-path-tooltip {
+    max-width: calc(100vw - 24px);
+    padding: 14px;
+    font-size: 13px;
+  }
+
+  .guided-path-tooltip-mobile {
+    max-height: min(34vh, 230px);
+  }
+
+  .guided-path-tooltip h3 {
+    font-size: 15px;
+  }
+
+  .guided-path-tooltip p {
+    font-size: 12px;
+  }
+
+  .guided-path-arrow {
+    width: 32px;
+    height: 32px;
+  }
+
+  .guided-path-arrow svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .guided-path-tooltip button {
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+  .guided-path-highlight {
+    border-radius: 8px;
+    border-width: 2px;
+  }
+
+  body.guided-path-mobile-task-form-creation [data-tour="task-form-container"] {
+    max-height: 56vh;
+  }
+}
+
+/* Reduce Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  .guided-path-overlay {
+    animation: none;
+    backdrop-filter: none;
+  }
+
+  .guided-path-highlight {
+    animation: none;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2),
+      0 0 20px rgba(59, 130, 246, 0.3);
+  }
+
+  .guided-path-arrow {
+    animation: none;
+  }
+
+  .guided-path-arrow-icon {
+    animation: none;
+  }
+
+  .guided-path-tooltip {
+    animation: none;
+  }
+}
+
+/* High Contrast Mode Support */
+@media (prefers-contrast: more) {
+  .guided-path-highlight {
+    border-width: 4px;
+    border-color: #0066ff;
+  }
+
+  .guided-path-tooltip {
+    border-width: 2px;
+    border-color: #0066ff;
+    background: #ffffff;
+    box-shadow: 0 0 0 2px #0066ff;
+  }
+
+  .guided-path-overlay {
+    background-color: rgba(0, 0, 0, 0.9);
+  }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+  .guided-path-tooltip {
+    background: #1a1a1a;
+    color: #ffffff;
+    border-color: rgba(59, 130, 246, 0.3);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5),
+      0 10px 20px rgba(0, 0, 0, 0.3);
+  }
+
+  .guided-path-tooltip h3 {
+    color: #ffffff;
+  }
+
+  .guided-path-tooltip p {
+    color: #e0e0e0;
+  }
+
+  .guided-path-overlay {
+    background-color: rgba(0, 0, 0, 0.85);
+  }
+}

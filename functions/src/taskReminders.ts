@@ -1,0 +1,389 @@
+import * as functions from 'firebase-functions/v1';
+import * as admin from 'firebase-admin';
+
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
+const db = admin.firestore();
+
+const EMAILJS_API_URL = 'https://api.emailjs.com/api/v1.0/email/send';
+const NOTIFICATION_TIME_ZONE = 'Asia/Manila';
+
+// Helper to get EmailJS config at runtime via process.env
+// Values are set in functions/.env and loaded automatically by Firebase CLI
+function getEmailJSConfig() {
+  return {
+    serviceId: process.env.EMAILJS_SERVICE_ID || 'service_oys4rrh',
+    nearlyDueTemplateId: process.env.EMAILJS_TEMPLATE_ID || 'template_nx6ojrh',
+    overdueTemplateId: process.env.EMAILJS_OVERDUE_TEMPLATE_ID || 'template_xxeukwx',
+    publicKey: process.env.EMAILJS_PUBLIC_KEY || 'yHIdKseofyA7jzjcF',
+    appLink: process.env.FRONTEND_URL || 'https://tasksync-70aa9.web.app'
+  };
+}
+
+type FirestoreDateValue = admin.firestore.Timestamp | string | Date;
+
+type TaskStatus = 'todo' | 'in-progress' | 'completed' | 'overdue';
+
+type ScheduledTask = {
+  id: string;
+  user_id?: string;
+  title?: string;
+  description?: string;
+  dueDate?: FirestoreDateValue;
+  due_at?: FirestoreDateValue; // Support both field names
+  priority?: 'low' | 'medium' | 'high';
+  priority_manual?: 'low' | 'medium' | 'high'; // Support both field names
+  status?: TaskStatus;
+  deleted_at?: FirestoreDateValue;
+  created_at?: FirestoreDateValue;
+};
+
+type TaskUser = {
+  id: string;
+  email?: string;
+  username?: string;
+  displayName?: string;
+  name?: string;
+};
+
+function normalizeDueDate(dueDate?: FirestoreDateValue): Date {
+  if (!dueDate) {
+    return new Date(0);
+  }
+
+  if (dueDate instanceof Date) {
+    return dueDate;
+  }
+
+  if (typeof dueDate === 'string') {
+    return new Date(dueDate);
+  }
+
+  if (dueDate.toDate && typeof dueDate.toDate === 'function') {
+    return dueDate.toDate();
+  }
+
+  return new Date(0);
+}
+
+function formatDateKeyInZone(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: NOTIFICATION_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function getHourInZone(date: Date): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: NOTIFICATION_TIME_ZONE,
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0');
+  return hour === 24 ? 0 : hour;
+}
+
+function isDueTomorrowInNotificationZone(dueDate: Date, referenceDate: Date): boolean {
+  const tomorrow = new Date(referenceDate.getTime() + 24 * 60 * 60 * 1000);
+  return formatDateKeyInZone(dueDate) === formatDateKeyInZone(tomorrow);
+}
+
+function formatDueDate(task: ScheduledTask): string {
+  const dueDate = normalizeDueDate(task.dueDate || task.due_at);
+
+  if (!Number.isFinite(dueDate.getTime())) {
+    return 'No due date';
+  }
+
+  return dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function formatPriority(task: ScheduledTask): string {
+  return (task.priority || task.priority_manual || 'medium').toUpperCase();
+}
+
+async function sendEmailWithEmailJS(
+  toEmail: string,
+  toName: string,
+  subject: string,
+  tasks: ScheduledTask[],
+  templateId: string
+): Promise<void> {
+  const taskRows = tasks.map(task => {
+    const dueDate = formatDueDate(task);
+    const priority = formatPriority(task);
+    return `<tr style="background-color: #ffffff;">
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 58%; vertical-align: top;">
+        <div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
+      </td>
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 21%; vertical-align: top;">
+        <span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
+      </td>
+      <td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555; width: 21%; vertical-align: top;">
+        ${dueDate}
+      </td>
+    </tr>`;
+  }).join('');
+
+  const taskListHTML = `<tbody>${taskRows}</tbody>`;
+
+  const config = getEmailJSConfig();
+  const payload = {
+    service_id: config.serviceId,
+    template_id: templateId,
+    user_id: config.publicKey,
+    template_params: {
+      to_email: toEmail,
+      user_name: toName,
+      subject: subject,
+      task_count: String(tasks.length),
+      tasks_list: taskListHTML,
+      app_link: config.appLink,
+    },
+  };
+
+  const response = await fetch(EMAILJS_API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`EmailJS failed: ${response.status} ${details}`);
+  }
+}
+
+async function getUsers(): Promise<TaskUser[]> {
+  const usersSnapshot = await db.collection('users').get();
+  return usersSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() as Omit<TaskUser, 'id'>),
+  }));
+}
+
+async function getUserTasks(userId: string): Promise<ScheduledTask[]> {
+  const tasksSnapshot = await db
+    .collection('tasks')
+    .where('user_id', '==', userId)
+    .get();
+
+  return tasksSnapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...(doc.data() as Omit<ScheduledTask, 'id'>),
+  }));
+}
+
+export async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: number; users: number; errors: number }> {
+  const users = await getUsers();
+  // Use Manila-timezone date keys so "today"/"tomorrow" are evaluated in the
+  // notification zone rather than the Cloud Functions server's UTC clock.
+  const now = new Date();
+  const todayKey = formatDateKeyInZone(now);
+
+  let sent = 0;
+  let errors = 0;
+
+  for (const user of users) {
+    if (!user.email) {
+      continue;
+    }
+
+    try {
+      const allTasks = await getUserTasks(user.id);
+      
+      const matchingTasks = allTasks.filter((task) => {
+        if (task.status === 'completed') {
+          return false;
+        }
+
+        const dueDate = normalizeDueDate(task.dueDate || task.due_at);
+        if (!Number.isFinite(dueDate.getTime())) {
+          return false;
+        }
+
+        if (mode === 'nearly-due') {
+          // Task is "due tomorrow" in Manila timezone
+          return isDueTomorrowInNotificationZone(dueDate, now);
+        }
+
+        // Overdue: due-date day (Manila) is strictly before today (Manila).
+        // YYYY-MM-DD strings compare correctly lexicographically.
+        return formatDateKeyInZone(dueDate) < todayKey;
+      });
+
+      if (matchingTasks.length === 0) {
+        continue;
+      }
+
+      const toName = user.username || user.displayName || user.name || 'TaskSync User';
+      const subject = mode === 'nearly-due'
+        ? `TaskSync Reminder: ${matchingTasks.length} task(s) due in 24 hours`
+        : `TaskSync Alert: ${matchingTasks.length} overdue task(s)`;
+      
+      const config = getEmailJSConfig();
+      const templateId = mode === 'nearly-due'
+        ? config.nearlyDueTemplateId
+        : config.overdueTemplateId;
+
+      await sendEmailWithEmailJS(
+        user.email,
+        toName,
+        subject,
+        matchingTasks,
+        templateId
+      );
+      sent += matchingTasks.length;
+    } catch (error) {
+      errors += 1;
+      console.error(`Schedule ${mode} failed for user ${user.id}:`, error);
+    }
+  }
+
+  return { sent, users: users.length, errors };
+}
+
+export const sendNearlyDueReminder = functions.pubsub
+  .schedule('0 9 * * *')
+  .timeZone('Asia/Manila')
+  .onRun(async () => {
+    const result = await processSchedule('nearly-due');
+    console.log(`sendNearlyDueReminder finished. sent=${result.sent} users=${result.users} errors=${result.errors}`);
+    return null;
+  });
+
+export const sendOverdueAlert = functions.pubsub
+  .schedule('0 17 * * *')
+  .timeZone('Asia/Manila')
+  .onRun(async () => {
+    const result = await processSchedule('overdue');
+    console.log(`sendOverdueAlert finished. sent=${result.sent} users=${result.users} errors=${result.errors}`);
+    return null;
+  });
+
+/**
+ * If a user creates a task after the daily 9 AM reminder has already run,
+ * send the nearly-due reminder immediately when the new task is due tomorrow.
+ */
+export const sendNearlyDueOnTaskCreate = functions.firestore
+  .document('tasks/{taskId}')
+  .onCreate(async (snapshot) => {
+    const task = {
+      id: snapshot.id,
+      ...(snapshot.data() as Omit<ScheduledTask, 'id'>),
+    };
+
+    if (!task.user_id || task.status === 'completed' || task.deleted_at) {
+      return null;
+    }
+
+    const normalizedCreatedAt = normalizeDueDate(task.created_at);
+    const createdAt = Number.isFinite(normalizedCreatedAt.getTime())
+      ? normalizedCreatedAt
+      : snapshot.createTime.toDate();
+    const dueDate = normalizeDueDate(task.dueDate || task.due_at);
+
+    if (!Number.isFinite(createdAt.getTime()) || !Number.isFinite(dueDate.getTime())) {
+      return null;
+    }
+
+    const createdAfterNine = getHourInZone(createdAt) >= 9;
+    const dueTomorrow = isDueTomorrowInNotificationZone(dueDate, createdAt);
+
+    if (!createdAfterNine || !dueTomorrow) {
+      return null;
+    }
+
+    const userSnapshot = await db.collection('users').doc(task.user_id).get();
+    const user = userSnapshot.exists
+      ? ({id: userSnapshot.id, ...(userSnapshot.data() as Omit<TaskUser, 'id'>)})
+      : null;
+
+    if (!user?.email) {
+      console.log(`sendNearlyDueOnTaskCreate skipped task=${task.id}: user has no email`);
+      return null;
+    }
+
+    const toName = user.username || user.displayName || user.name || 'TaskSync User';
+    const config = getEmailJSConfig();
+
+    await sendEmailWithEmailJS(
+      user.email,
+      toName,
+      'TaskSync Reminder: 1 task due in 24 hours',
+      [task],
+      config.nearlyDueTemplateId
+    );
+
+    console.log(`sendNearlyDueOnTaskCreate sent task=${task.id} user=${task.user_id}`);
+    return null;
+  });
+
+/**
+ * Automatically update task status to 'overdue' if due date has passed
+ * Runs every hour to keep tasks in sync with current date/time
+ */
+export const updateOverdueTasksStatus = functions.pubsub
+  .schedule('0 * * * *')
+  .timeZone('UTC')
+  .onRun(async () => {
+    let updated = 0;
+    let errors = 0;
+    
+    try {
+      const users = await getUsers();
+
+      for (const user of users) {
+        try {
+          const allTasks = await getUserTasks(user.id);
+
+          for (const task of allTasks) {
+            // Skip if already completed or already overdue
+            if (task.status === 'completed' || task.status === 'overdue') {
+              continue;
+            }
+
+            // Handle both dueDate and due_at field names
+            const rawDueDate = task.dueDate || task.due_at;
+            const dueDate = normalizeDueDate(rawDueDate);
+
+            // Check if task is overdue (compare only dates, not times)
+            // A task is overdue only if due date is BEFORE today (not today itself)
+            const todayAtMidnight = new Date();
+            todayAtMidnight.setHours(0, 0, 0, 0);
+            const dueDateAtMidnight = new Date(dueDate);
+            dueDateAtMidnight.setHours(0, 0, 0, 0);
+            
+            if (Number.isFinite(dueDate.getTime()) && dueDateAtMidnight < todayAtMidnight) {
+              // Update task status to overdue
+              await db
+                .collection('tasks')
+                .doc(task.id)
+                .update({
+                  status: 'overdue',
+                  updated_at: admin.firestore.FieldValue.serverTimestamp(),
+                });
+
+              updated += 1;
+            }
+          }
+        } catch (error) {
+          errors += 1;
+          console.error(`Failed to update overdue tasks for user ${user.id}:`, error);
+        }
+      }
+
+      console.log(`updateOverdueTasksStatus finished. updated=${updated} errors=${errors}`);
+      return null;
+    } catch (error) {
+      console.error('updateOverdueTasksStatus failed:', error);
+      return null;
+    }
+  });
+
