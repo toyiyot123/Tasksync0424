@@ -1,5 +1,4 @@
 import * as functions from 'firebase-functions/v1';
-import * as functionsConfig from 'firebase-functions';
 import * as admin from 'firebase-admin';
 
 if (!admin.apps.length) {
@@ -11,30 +10,16 @@ const db = admin.firestore();
 const EMAILJS_API_URL = 'https://api.emailjs.com/api/v1.0/email/send';
 const NOTIFICATION_TIME_ZONE = 'Asia/Manila';
 
-// Helper to get EmailJS config at runtime
+// Helper to get EmailJS config at runtime via process.env
+// Values are set in functions/.env and loaded automatically by Firebase CLI
 function getEmailJSConfig() {
-  try {
-    const runtimeConfig = (functionsConfig as any).config();
-    const emailjs = runtimeConfig.emailjs || {};
-    const frontend = runtimeConfig.frontend || {};
-
-    return {
-      serviceId: process.env.EMAILJS_SERVICE_ID || emailjs.service_id || 'service_mjgbtih',
-      nearlyDueTemplateId: process.env.EMAILJS_TEMPLATE_ID || emailjs.template_id || 'template_4dxvv8d',
-      overdueTemplateId: process.env.EMAILJS_OVERDUE_TEMPLATE_ID || emailjs.overdue_template_id || 'template_ztabchb',
-      publicKey: process.env.EMAILJS_PUBLIC_KEY || emailjs.public_key || '9Dw-9GkNwVvoLmb1q',
-      appLink: process.env.FRONTEND_URL || frontend.url || 'https://tasksync-70aa9.web.app'
-    };
-  } catch (error) {
-    console.warn('Failed to get config, using defaults:', error);
-    return {
-      serviceId: 'service_mjgbtih',
-      nearlyDueTemplateId: 'template_4dxvv8d',
-      overdueTemplateId: 'template_ztabchb',
-      publicKey: '9Dw-9GkNwVvoLmb1q',
-      appLink: 'https://tasksync-70aa9.web.app'
-    };
-  }
+  return {
+    serviceId: process.env.EMAILJS_SERVICE_ID || 'service_oys4rrh',
+    nearlyDueTemplateId: process.env.EMAILJS_TEMPLATE_ID || 'template_nx6ojrh',
+    overdueTemplateId: process.env.EMAILJS_OVERDUE_TEMPLATE_ID || 'template_xxeukwx',
+    publicKey: process.env.EMAILJS_PUBLIC_KEY || 'yHIdKseofyA7jzjcF',
+    appLink: process.env.FRONTEND_URL || 'https://tasksync-70aa9.web.app'
+  };
 }
 
 type FirestoreDateValue = admin.firestore.Timestamp | string | Date;
@@ -58,6 +43,7 @@ type ScheduledTask = {
 type TaskUser = {
   id: string;
   email?: string;
+  username?: string;
   displayName?: string;
   name?: string;
 };
@@ -113,7 +99,7 @@ function formatDueDate(task: ScheduledTask): string {
     return 'No due date';
   }
 
-  return dueDate.toLocaleString();
+  return dueDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
 }
 
 function formatPriority(task: ScheduledTask): string {
@@ -127,22 +113,17 @@ async function sendEmailWithEmailJS(
   tasks: ScheduledTask[],
   templateId: string
 ): Promise<void> {
-  // Build task table HTML with header row for consistent layout
   const taskRows = tasks.map(task => {
     const dueDate = formatDueDate(task);
     const priority = formatPriority(task);
-    
     return `<tr style="background-color: #ffffff;">
       <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 58%; vertical-align: top;">
-        <span class="mobile-label" style="display: none;">Task</span>
         <div style="font-weight: bold; margin-bottom: 5px;">${task.title || 'Untitled'}</div>
       </td>
       <td style="padding: 16px; border-top: 1px solid #eeeeee; width: 21%; vertical-align: top;">
-        <span class="mobile-label" style="display: none;">Priority</span>
         <span style="display: inline-block; padding: 6px 14px; background-color: #ef4444; color: #ffffff; border-radius: 20px; font-size: 13px; font-weight: bold;">${priority}</span>
       </td>
       <td style="padding: 16px; border-top: 1px solid #eeeeee; color: #555555; width: 21%; vertical-align: top;">
-        <span class="mobile-label" style="display: none;">Due</span>
         ${dueDate}
       </td>
     </tr>`;
@@ -201,8 +182,10 @@ async function getUserTasks(userId: string): Promise<ScheduledTask[]> {
 
 export async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{ sent: number; users: number; errors: number }> {
   const users = await getUsers();
-  const todayAtMidnight = new Date();
-  todayAtMidnight.setHours(0, 0, 0, 0);
+  // Use Manila-timezone date keys so "today"/"tomorrow" are evaluated in the
+  // notification zone rather than the Cloud Functions server's UTC clock.
+  const now = new Date();
+  const todayKey = formatDateKeyInZone(now);
 
   let sent = 0;
   let errors = 0;
@@ -226,35 +209,20 @@ export async function processSchedule(mode: 'nearly-due' | 'overdue'): Promise<{
         }
 
         if (mode === 'nearly-due') {
-          // For nearly-due: check if task is due EXACTLY 1 day from today (not today, not 2+ days)
-          // Get tomorrow's date at midnight
-          const tomorrowAtMidnight = new Date(todayAtMidnight);
-          tomorrowAtMidnight.setDate(tomorrowAtMidnight.getDate() + 1);
-          
-          // Get day after tomorrow at midnight
-          const dayAfterTomorrowAtMidnight = new Date(tomorrowAtMidnight);
-          dayAfterTomorrowAtMidnight.setDate(dayAfterTomorrowAtMidnight.getDate() + 1);
-          
-          // Convert task due date to midnight for comparison
-          const dueDateAtMidnight = new Date(dueDate);
-          dueDateAtMidnight.setHours(0, 0, 0, 0);
-          
-          // Include only if due date is tomorrow (not today, not 2+ days away)
-          return dueDateAtMidnight >= tomorrowAtMidnight && dueDateAtMidnight < dayAfterTomorrowAtMidnight;
+          // Task is "due tomorrow" in Manila timezone
+          return isDueTomorrowInNotificationZone(dueDate, now);
         }
 
-        // For overdue: compare only dates (not times)
-        // A task is overdue only if due date is BEFORE today (not today itself)
-        const dueDateAtMidnight = new Date(dueDate);
-        dueDateAtMidnight.setHours(0, 0, 0, 0);
-        return dueDateAtMidnight < todayAtMidnight;
+        // Overdue: due-date day (Manila) is strictly before today (Manila).
+        // YYYY-MM-DD strings compare correctly lexicographically.
+        return formatDateKeyInZone(dueDate) < todayKey;
       });
 
       if (matchingTasks.length === 0) {
         continue;
       }
 
-      const toName = user.displayName || user.name || 'TaskSync User';
+      const toName = user.username || user.displayName || user.name || 'TaskSync User';
       const subject = mode === 'nearly-due'
         ? `TaskSync Reminder: ${matchingTasks.length} task(s) due in 24 hours`
         : `TaskSync Alert: ${matchingTasks.length} overdue task(s)`;
@@ -342,7 +310,7 @@ export const sendNearlyDueOnTaskCreate = functions.firestore
       return null;
     }
 
-    const toName = user.displayName || user.name || 'TaskSync User';
+    const toName = user.username || user.displayName || user.name || 'TaskSync User';
     const config = getEmailJSConfig();
 
     await sendEmailWithEmailJS(

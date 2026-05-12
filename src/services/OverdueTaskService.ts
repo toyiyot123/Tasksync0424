@@ -8,8 +8,30 @@ import { useTaskStore } from '@/store/taskStore';
  * Tracks which tasks have been notified about
  */
 
-// Track which tasks we've already sent notifications for (taskId -> timestamp)
-const notifiedTaskIds = new Map<string, number>();
+// Track which tasks we've already sent notifications for today, persisted to localStorage
+// so page refreshes don't re-send the same email.
+const OVERDUE_STORAGE_KEY_PREFIX = 'tasksync_overdue_notified_';
+
+function getTodayKeyOverdue(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' }); // YYYY-MM-DD
+}
+
+function getOverdueNotifiedToday(): Set<string> {
+  try {
+    const raw = localStorage.getItem(OVERDUE_STORAGE_KEY_PREFIX + getTodayKeyOverdue());
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function markOverdueTaskNotified(taskId: string): void {
+  try {
+    const set = getOverdueNotifiedToday();
+    set.add(taskId);
+    localStorage.setItem(OVERDUE_STORAGE_KEY_PREFIX + getTodayKeyOverdue(), JSON.stringify([...set]));
+  } catch { /* ignore storage errors */ }
+}
 
 function normalizeDueDate(dueDate: any): Date {
   if (!dueDate) {
@@ -60,9 +82,9 @@ async function sendOverdueNotificationEmail(
     }
 
     const EMAILJS_API_URL = 'https://api.emailjs.com/api/v1.0/email/send';
-    const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || 'service_mjgbtih';
-    const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_OVERDUE_TEMPLATE_ID || 'template_ztabchb';
-    const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || '9Dw-9GkNwVvoLmb1q';
+    const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || 'service_oys4rrh';
+    const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_OVERDUE_TEMPLATE_ID || 'template_xxeukwx';
+    const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || 'yHIdKseofyA7jzjcF';
 
     console.log(`[OverdueTaskService] Using EmailJS:`);
     console.log(`  Service ID: ${EMAILJS_SERVICE_ID}`);
@@ -257,13 +279,14 @@ export class OverdueTaskService {
 
         if (task.status === 'overdue') {
           console.log(`  → Already marked as overdue`);
-          // Check if we haven't notified about this task yet
-          if (!notifiedTaskIds.has(task.id)) {
+          // Check if we haven't notified about this task yet today
+          const overdueNotifiedToday = getOverdueNotifiedToday();
+          if (!overdueNotifiedToday.has(task.id)) {
             // IMPORTANT: Re-verify the task is actually still overdue before notifying
             if (isOverdue) {
               console.log(`  → 🔔 Not yet notified! Adding to notification list...`);
               alreadyOverdueNotified.push(task);
-              notifiedTaskIds.set(task.id, now.getTime());
+              markOverdueTaskNotified(task.id);
             } else {
               console.log(`  → Task marked overdue but due date is not actually past due, skipping notification`);
             }
@@ -286,7 +309,7 @@ export class OverdueTaskService {
             
             updated++;
             updatedTasks.push(task);
-            notifiedTaskIds.set(task.id, now.getTime());
+            markOverdueTaskNotified(task.id);
             console.log(`  ✅ Successfully updated!`);
           } catch (error) {
             console.error(`  ❌ Failed to update:`, error);

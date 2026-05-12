@@ -21,8 +21,14 @@ export interface ProductivityInsight {
   totalRecords: number;
 }
 
+export interface UnscheduledTask {
+  task: Task;
+  reason: string;
+}
+
 export interface AIScheduleResult {
   schedule: ScheduledTask[];
+  unscheduled: UnscheduledTask[];
   insights: ProductivityInsight;
   generatedAt: Date;
 }
@@ -119,10 +125,12 @@ function computeHourlyRates(records: TaskHistoryRecord[]): Map<number, { complet
 
 function rankHours(hourlyRates: Map<number, { completed: number; total: number }>): { hour: number; rate: number }[] {
   const result: { hour: number; rate: number }[] = [];
-  hourlyRates.forEach((stats, hour) => {
-    const rate = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
-    result.push({ hour, rate });
-  });
+  // Fill all 24 hours so unseen hours (0 tasks done) appear as 0% and show up in worst list
+  for (let h = 0; h < 24; h++) {
+    const stats = hourlyRates.get(h);
+    const rate = stats && stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
+    result.push({ hour: h, rate });
+  }
   return result.sort((a, b) => b.rate - a.rate);
 }
 
@@ -268,8 +276,22 @@ export async function generateAISchedule(
   const hasReliableInsights = records.length >= MIN_RECORDS_FOR_INSIGHTS;
 
   const insights: ProductivityInsight = {
-    bestHours: hasReliableInsights ? ranked.slice(0, 3) : [],
-    worstHours: hasReliableInsights ? [...ranked].reverse().slice(0, 3) : [],
+    bestHours: hasReliableInsights
+      ? (() => {
+          // Cap at half the distinct hours so worst list always has entries too
+          const limit = Math.max(1, Math.ceil(ranked.length / 2));
+          return ranked.slice(0, Math.min(3, limit));
+        })()
+      : [],
+    worstHours: hasReliableInsights
+      ? (() => {
+          const limit = Math.max(1, Math.ceil(ranked.length / 2));
+          const bestSet = new Set(ranked.slice(0, Math.min(3, limit)).map(h => h.hour));
+          // Hours NOT in bestHours, sorted worst (lowest rate) first
+          const candidates = [...ranked].reverse().filter(h => !bestSet.has(h.hour));
+          return candidates.slice(0, 3);
+        })()
+      : [],
     overallSuccessRate,
     totalRecords: records.length,
   };
@@ -339,21 +361,16 @@ export async function generateAISchedule(
 
   const WORK_DURATION = getWorkDurationMinutes();
 
-  // Priority-based break times: each task gets its own recovery time based on priority
-  // Low priority: 10 minutes — quick recovery for lighter tasks
-  // Medium priority: 20 minutes — balanced recovery
-  // High priority: 30 minutes — longer recovery after intense work
-  const getBreakTime = (priority: Task['priority']): number => {
-    switch (priority) {
-      case 'low':
-        return 10;
-      case 'medium':
-        return 20;
-      case 'high':
-        return 30;
-      default:
-        return 20;
-    }
+  // Break times: directly from user's stress level setting
+  // - Low: 10 min (denser schedule)
+  // - Moderate: 20 min (balanced, default)
+  // - High: 35 min (more recovery time)
+  const getBreakTime = (stressLevel: AIScheduleSettings['stressLevel']): number => {
+    return {
+      'Low': 10,
+      'Moderate': 20,
+      'High': 35,
+    }[stressLevel] ?? 20;
   };
 
   // ── Learn weights from user's history (used as DQL fallback) ──
@@ -407,6 +424,9 @@ export async function generateAISchedule(
 
   console.log(`[AISchedule] Tasks after filter: ${tasksForToday.length}`);
 
+  const focusedUnscheduled: UnscheduledTask[] = [];
+  const effectiveTasks = tasksForToday;
+
   // ── DQL: train on task history, then predict best hour + priority Q-value per task ──
   // Mirrors AI.ipynb — Dense(64→64→32→14,linear), Bellman updates, experience replay.
   let dqlModel: DQLSchedulerModel | null = null;
@@ -429,7 +449,7 @@ export async function generateAISchedule(
     // Generate per-task predictions using actual urgency/importance features.
     // maxQValue = how strongly the model expects this task to succeed → used for ranking.
     // The model predicts within 8-21 hour range, then the scheduler constrains to user's workStart/workEnd.
-    for (const task of tasksForToday) {
+    for (const task of effectiveTasks) {
       const pred = await dqlModel.predict(
         toPriorityNum(task),
         (task.estimatedTime ?? 60) / 60,
@@ -443,15 +463,31 @@ export async function generateAISchedule(
 
   // Sort by DQL maxQValue (higher Q = model is more confident the task should be done first).
   // Falls back to learned intensity+deadline score if DQL training failed.
+  // Secondary sort by due date: earlier-due tasks are processed first within the same Q-value tier,
+  // ensuring tasks due today fill the work window before tasks due tomorrow.
   const useDQL = taskPredictions.size > 0;
-  const sorted = [...tasksForToday].sort((a, b) =>
-    useDQL
+  const sorted = [...effectiveTasks].sort((a, b) => {
+    // Overdue tasks are ALWAYS first, regardless of scheduling style.
+    const aOverdue = isMissedTask(a) ? 0 : 1;
+    const bOverdue = isMissedTask(b) ? 0 : 1;
+    if (aOverdue !== bOverdue) return aOverdue - bOverdue;
+
+    // Flexible: sort by due date only — spread evenly regardless of priority.
+    // Overdue tasks already floated to top above.
+    if (settings.schedulingStyle === 'Flexible') {
+      return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+    }
+    // Focused & Balanced: Q-score is the sole ordering factor — a high-priority task due tomorrow
+    // beats a low-priority task due today.
+    const primaryDiff = useDQL
       ? (taskPredictions.get(b.id)?.maxQValue ?? 0) - (taskPredictions.get(a.id)?.maxQValue ?? 0)
-      : computeLearnedScore(b, learnedWeights) - computeLearnedScore(a, learnedWeights)
-  );
+      : computeLearnedScore(b, learnedWeights) - computeLearnedScore(a, learnedWeights);
+    return primaryDiff;
+  });
 
   // ── Smart scheduling: group by day, reset clock per day ──
   const schedule: ScheduledTask[] = [];
+  const unscheduled: UnscheduledTask[] = [];
 
   // Get best productivity hours filtered to work window
   let bestHours = ranked.length > 0
@@ -494,31 +530,13 @@ export async function generateAISchedule(
       );
     }
   } else if (settings.schedulingStyle === 'Balanced') {
-    // Balanced: prioritize peak hours from historical data, then other work hours
-    const peakHours = bestHours.filter(h => h >= settings.peakStart && h < settings.peakEnd);
-    const nonPeakHours = bestHours.filter(h => h < settings.peakStart || h >= settings.peakEnd);
-    
-    if (peakHours.length > 0) {
-      // Peak hours available in history: prefer them
-      bestHours = [...peakHours, ...nonPeakHours];
+    // Balanced: all work hours in chronological order — highest Q-score task starts at WORK_START
+    if (WORK_START <= WORK_END) {
+      bestHours = Array.from({ length: WORK_END - WORK_START }, (_, i) => WORK_START + i);
     } else {
-      // No peak hour history: generate peak hours and then fill with other work hours
-      let generatedPeakHours: number[] = [];
-      if (settings.peakStart <= settings.peakEnd) {
-        generatedPeakHours = Array.from(
-          { length: settings.peakEnd - settings.peakStart },
-          (_, i) => settings.peakStart + i
-        );
-      } else {
-        // Peak window wraps around midnight
-        const beforeMidnight = Array.from(
-          { length: 24 - settings.peakStart },
-          (_, i) => settings.peakStart + i
-        );
-        const afterMidnight = Array.from({ length: settings.peakEnd }, (_, i) => i);
-        generatedPeakHours = [...beforeMidnight, ...afterMidnight];
-      }
-      bestHours = [...generatedPeakHours, ...nonPeakHours];
+      const beforeMidnight = Array.from({ length: 24 - WORK_START }, (_, i) => WORK_START + i);
+      const afterMidnight = Array.from({ length: WORK_END }, (_, i) => i);
+      bestHours = [...beforeMidnight, ...afterMidnight];
     }
   } else if (settings.schedulingStyle === 'Flexible') {
     // Flexible: use ALL available work hours for maximum scheduling flexibility
@@ -562,18 +580,24 @@ export async function generateAISchedule(
     (a, b) => new Date(a).getTime() - new Date(b).getTime()
   );
 
-  for (const dayKey of sortedDayKeys) {
-    const dayTasks = dayGroups.get(dayKey)!;
+  // For night shift (WORK_START > WORK_END): merge ALL tasks into one continuous session.
+  // This prevents each calendar-day group from restarting at WORK_START (e.g. 9 PM tomorrow).
+  // For day shift: keep existing per-day behaviour.
+  const sessionEntries: [string, Task[]][] = WORK_START > WORK_END
+    ? [[
+        sortedDayKeys[0] ?? today.toDateString(),
+        sortedDayKeys.flatMap(k => dayGroups.get(k)!),
+      ]]
+    : sortedDayKeys.map(k => [k, dayGroups.get(k)!]);
+
+  for (const [dayKey, dayTasks] of sessionEntries) {
     const scheduledDay = new Date(dayKey);
 
-    // In Focused mode, the preferred window is peakStart → peakEnd.
-    // In other modes the full work day (WORK_START → WORK_END) is used.
+    // Focused: start from peakStart to keep high-priority tasks inside peak hours.
+    // Balanced & Flexible: start from WORK_START so the first task lands at the day's opening hour.
     const dayStartHour = settings.schedulingStyle === 'Focused'
       ? settings.peakStart
       : WORK_START;
-    // const effectiveWorkEnd = settings.schedulingStyle === 'Focused'
-    //   ? settings.peakEnd
-    //   : WORK_END;
 
     // Track every placed interval so no two tasks can share the same time slot.
     const dayIntervals: { start: number; end: number }[] = [];
@@ -588,23 +612,16 @@ export async function generateAISchedule(
      *
      * Returns null only if the task cannot fit anywhere in the workday.
      */
+
+    // Compute work window boundaries once — used both by the guard and inside findSlot.
+    const fullStart = WORK_START <= WORK_END ? WORK_START * 60 : 0;
+    const fullEnd = WORK_START <= WORK_END
+      ? WORK_END * 60
+      : ((24 - WORK_START) + WORK_END) * 60;
+
     const findSlot = (preferred: number, duration: number, task: Task): number | null => {
-      const breakTime = getBreakTime(task.priority);
-      
-      // Convert work window boundaries to minutes, handling night shift
-      let fullStart: number;
-      let fullEnd: number;
-      
-      if (WORK_START <= WORK_END) {
-        // Day shift: straightforward linear calculation
-        fullStart = WORK_START * 60;
-        fullEnd = WORK_END * 60;
-      } else {
-        // Night shift: treat as 24-hour continuous window from WORK_START through midnight to WORK_END
-        // We'll use minutes from start of work window (WORK_START) to end of work window (next day WORK_END)
-        fullStart = 0; // relative to WORK_START
-        fullEnd = ((24 - WORK_START) + WORK_END) * 60; // total minutes in work window
-      }
+      const breakTime = getBreakTime(settings.stressLevel);
+      // fullStart and fullEnd are defined in the outer scope (hoisted above findSlot).
 
       const sorted = [...dayIntervals].sort((a, b) => a.start - b.start);
 
@@ -619,73 +636,141 @@ export async function generateAISchedule(
 
       // Build allowed hour windows based on scheduling style
       let allowedHours: number[] = [];
-      if (settings.schedulingStyle === 'Balanced') {
-        // Balanced: peak hours first, then other work hours
-        const peakWindow = bestHours.filter(h => h >= settings.peakStart && h < settings.peakEnd);
-        const otherHours = bestHours.filter(h => h < settings.peakStart || h >= settings.peakEnd);
-        allowedHours = [...peakWindow, ...otherHours];
-      } else if (settings.schedulingStyle === 'Flexible') {
-        // Flexible: all work hours equally available
-        allowedHours = bestHours;
-      } else {
-        // Focused: peak window only
+      if (settings.schedulingStyle === 'Focused') {
+        // Focused: peak window only — all tasks must land in peak productivity hours
         allowedHours = bestHours.filter(h => h >= settings.peakStart && h < settings.peakEnd);
+      } else {
+        // Balanced & Flexible: all work hours available in order
+        allowedHours = bestHours;
       }
 
-      // 1. Preferred spot (if it's in allowed hours)
-      if (settings.schedulingStyle === 'Flexible' || 
-          allowedHours.includes(Math.floor(preferred / 60))) {
-        const fromPreferred = tryFrom(preferred, fullEnd);
-        if (fromPreferred !== null) return fromPreferred;
-      }
+      // 1. Preferred spot (cursor position)
+      const fromPreferred = tryFrom(preferred, fullEnd);
+      if (fromPreferred !== null) return fromPreferred;
 
-      // 2. Try allowed hours in order (respects Balanced prioritization)
+      // 2. Try allowed hours in order — but NEVER before the cursor (preferred).
+      // Using Math.max(hourStart, preferred) ensures we don't jump backwards to
+      // an earlier free slot that is already behind the sequential cursor.
       for (const hour of allowedHours) {
-        const hourStart = hour * 60;
-        const slot = tryFrom(hourStart, fullEnd);
+        const hourStart = WORK_START <= WORK_END ? hour * 60 : hourToMinutesInWorkWindow(hour);
+        const slot = tryFrom(Math.max(hourStart, preferred), fullEnd);
         if (slot !== null) return slot;
       }
 
-      // 3. Full-day fallback for Flexible (tasks must never be silently dropped)
+      // 3. Full-day fallback for Flexible — also respect the cursor.
       if (settings.schedulingStyle === 'Flexible') {
-        return tryFrom(fullStart, fullEnd);
+        return tryFrom(Math.max(fullStart, preferred), fullEnd);
       }
 
       return null;
     };
 
+    // Sequential cursor: tasks flow one after another within the work window.
+    // This prevents tasks from jumping to earlier free slots (e.g. 3 AM)
+    // when prior tasks already filled up to 6:50 AM.
+    // Higher Q-value tasks (sorted first) still get the earliest slots in the shift.
+    let sessionCursor = hourToMinutesInWorkWindow(dayStartHour);
+
+    // Normal day shift only: do not schedule today's tasks in a time slot that
+    // has already passed. Future days still start at the configured work window,
+    // and night-shift flow remains unchanged.
+    if (WORK_START <= WORK_END && scheduledDay.toDateString() === today.toDateString()) {
+      const now = new Date();
+      const nowMins = now.getHours() * 60 + now.getMinutes();
+      // Advance to the current time OR configured work start, whichever is later
+      sessionCursor = Math.max(sessionCursor, nowMins);
+    }
+
+    // Flexible: pre-compute start times using only the stress-level break between tasks.
+    // No extra spacing is added — the break shown in the UI equals exactly the stress-level break.
+    const flexibleStartTimes = new Map<string, number>();
+    if (settings.schedulingStyle === 'Flexible') {
+      const breakMins = getBreakTime(settings.stressLevel);
+      let flexCursor = sessionCursor;
+      for (const t of dayTasks) {
+        flexibleStartTimes.set(t.id, flexCursor);
+        flexCursor += Math.max(t.estimatedTime || settings.taskBlock || 60, 1) + breakMins;
+      }
+    }
+
     for (const task of dayTasks) {
       const durationMins = Math.max(task.estimatedTime || settings.taskBlock || 60, 1);
-
-      // Determine preferred start in minutes from midnight
-      let preferredMins: number;
-      if (isMissedTask(task)) {
-        // Overdue/missed tasks: fill in from the day start as soon as possible
-        preferredMins = dayStartHour * 60;
-      } else {
-        const pred = taskPredictions.get(task.id);
-        if (pred) {
-          let dqlHour = pred.bestHour;
-          if (settings.schedulingStyle === 'Focused') {
-            dqlHour = Math.max(dqlHour, settings.peakStart);
-            dqlHour = Math.min(dqlHour, settings.peakEnd - 1);
-          } else {
-            dqlHour = Math.max(dqlHour, WORK_START);
-            dqlHour = Math.min(dqlHour, WORK_END - 1);
-          }
-          preferredMins = dqlHour * 60;
-        } else {
-          // Fallback: use historically best productivity hours
-          const nextBestHour = bestHours.find(h => h >= dayStartHour) ?? dayStartHour;
-          preferredMins = nextBestHour * 60;
-        }
+      // Flexible: jump cursor to the pre-computed evenly-spaced position for this task
+      if (settings.schedulingStyle === 'Flexible' && flexibleStartTimes.has(task.id)) {
+        sessionCursor = flexibleStartTimes.get(task.id)!;
       }
 
-      const startMins = findSlot(preferredMins, durationMins, task);
-      if (startMins === null) continue; // can't fit even in full workday — skip
+      // Pre-check: if the task duration alone exceeds the entire available work window,
+      // it can never fit regardless of cursor position — mark unschedulable immediately.
+      if (durationMins > (fullEnd - fullStart)) {
+        const workStartLabel = formatTime(WORK_START);
+        const workEndLabel = formatTime(WORK_END);
+        unscheduled.push({
+          task,
+          reason: `This task cannot fit within your configured available timeframe (${workStartLabel} – ${workEndLabel}). Estimated duration (${durationMins} min) exceeds the total available work window.`,
+        });
+        continue;
+      }
+
+      // Guard: if the cursor has already reached or passed the end of the work window,
+      // no further tasks can fit — skip immediately to the unscheduled list.
+      if (sessionCursor >= fullEnd) {
+        const workStartLabel = formatTime(WORK_START);
+        const workEndLabel = formatTime(WORK_END);
+        unscheduled.push({
+          task,
+          reason: `This task cannot fit within your configured available timeframe (${workStartLabel} – ${workEndLabel}). The schedule is full.`,
+        });
+        continue;
+      }
+
+      // Day-shift explicit remaining-window guard:
+      // If the time left from the cursor to workEnd is less than the task duration,
+      // the task cannot fit — mark unschedulable immediately without calling findSlot.
+      // Night-shift uses a single merged session window, so this check is skipped there.
+      if (WORK_START <= WORK_END && sessionCursor + durationMins > fullEnd) {
+        const workStartLabel = formatTime(WORK_START);
+        const workEndLabel = formatTime(WORK_END);
+        unscheduled.push({
+          task,
+          reason: `This task cannot fit within your configured available timeframe (${workStartLabel} – ${workEndLabel}). Not enough time remaining in the work window.`,
+        });
+        continue;
+      }
+
+      // Always schedule from the current cursor — never jump to an earlier free slot.
+      const startMins = findSlot(sessionCursor, durationMins, task);
+      if (startMins === null) {
+        // Task doesn't fit in the remaining work window — record it as unscheduled
+        const workStartLabel = formatTime(WORK_START);
+        const workEndLabel = formatTime(WORK_END);
+        unscheduled.push({
+          task,
+          reason: `This task cannot fit within your configured available timeframe (${workStartLabel} – ${workEndLabel}). No available time slot remains.`,
+        });
+        continue;
+      }
 
       const endMins = startMins + durationMins;
+
+      // Day-shift safety boundary check: the placed slot must be fully within workStart–workEnd.
+      // The guards above make this unreachable in normal operation, but this acts as a hard
+      // defensive wall against any future regression that could produce an out-of-bounds slot.
+      // Night-shift slots are in relative-minutes space and are not checked here.
+      if (WORK_START <= WORK_END && (startMins < fullStart || endMins > fullEnd)) {
+        const workStartLabel = formatTime(WORK_START);
+        const workEndLabel = formatTime(WORK_END);
+        unscheduled.push({
+          task,
+          reason: `This task cannot fit within your configured available timeframe (${workStartLabel} – ${workEndLabel}). No available time slot remains.`,
+        });
+        continue;
+      }
+
       dayIntervals.push({ start: startMins, end: endMins });
+
+      // Advance cursor so the next task starts after this one + break
+      sessionCursor = endMins + getBreakTime(settings.stressLevel);
 
       // Convert slot minutes back to actual hour of day (handling night shift wrap-around)
       let assignedHour: number;
@@ -734,26 +819,34 @@ export async function generateAISchedule(
       let confidence: number;
       let reason: string;
 
+      // Use the exact scheduled start time (hour + minutes) in the reason text so it
+      // matches the displayed startTime. formatTime(assignedHour, startMin) includes minutes.
       if (dqlPred) {
         // DQL-derived confidence: Q-value mapped to 0-100
         confidence = dqlPred.confidence;
         const maxQ = dqlPred.maxQValue.toFixed(1);
         if (confidence >= 70) {
-          reason = `${confidence}% AI confidence at ${formatTime(assignedHour)} — Q-score ${maxQ}, intensity ${Math.round(intensity * 100)}%, deadline ${Math.round(deadlineScore * 100)}%`;
+          reason = `${confidence}% AI confidence at ${formatTime(assignedHour, startMin)} — Q-score ${maxQ}, intensity ${Math.round(intensity * 100)}%, deadline ${Math.round(deadlineScore * 100)}%`;
         } else {
-          reason = `Scheduled at ${formatTime(assignedHour)} — AI Q-score ${maxQ}, intensity ${Math.round(intensity * 100)}%, deadline ${Math.round(deadlineScore * 100)}%`;
+          reason = `Scheduled at ${formatTime(assignedHour, startMin)} — AI Q-score ${maxQ}, intensity ${Math.round(intensity * 100)}%, deadline ${Math.round(deadlineScore * 100)}%`;
         }
       } else {
         // Fallback: hour-based completion rate + intensity bonus
         confidence = computeConfidence(task, assignedHour, hourlyRates, overallSuccessRate);
         if (records.length === 0) {
-          reason = `Scheduled at ${formatTime(assignedHour)} — intensity ${Math.round(intensity * 100)}%, deadline urgency ${Math.round(deadlineScore * 100)}%`;
+          reason = `Scheduled at ${formatTime(assignedHour, startMin)} — intensity ${Math.round(intensity * 100)}%, deadline urgency ${Math.round(deadlineScore * 100)}%`;
         } else if (confidence >= 70) {
-          reason = `${confidence}% confidence at ${formatTime(assignedHour)} — intensity ${Math.round(intensity * 100)}%, deadline urgency ${Math.round(deadlineScore * 100)}% (priority weight ${Math.round(learnedWeights.intensity * 100)}%)`;
+          reason = `${confidence}% confidence at ${formatTime(assignedHour, startMin)} — intensity ${Math.round(intensity * 100)}%, deadline urgency ${Math.round(deadlineScore * 100)}% (priority weight ${Math.round(learnedWeights.intensity * 100)}%)`;
         } else {
-          reason = `Scheduled at ${formatTime(assignedHour)} — intensity ${Math.round(intensity * 100)}%, deadline urgency ${Math.round(deadlineScore * 100)}% (consider peak hours)`;
+          reason = `Scheduled at ${formatTime(assignedHour, startMin)} — intensity ${Math.round(intensity * 100)}%, deadline urgency ${Math.round(deadlineScore * 100)}% (consider peak hours)`;
         }
       }
+
+      // For night shift: determine the actual calendar day based on assigned hour.
+      // Hours from WORK_START to 23 → today; hours from 0 to WORK_END → tomorrow.
+      const actualScheduledDate = WORK_START > WORK_END
+        ? (assignedHour >= WORK_START ? new Date(today) : new Date(tomorrow))
+        : scheduledDay;
 
       schedule.push({
         task,
@@ -763,7 +856,7 @@ export async function generateAISchedule(
         durationMins,
         confidence,
         reason,
-        scheduledDate: scheduledDay,
+        scheduledDate: actualScheduledDate,
       });
     }
   }
@@ -773,20 +866,20 @@ export async function generateAISchedule(
 
   const todaySchedule = schedule
     .filter(s => s.scheduledDate.toDateString() === todayDateString)
-    .sort((a, b) => a.startHour !== b.startHour ? a.startHour - b.startHour : 0);
+    .sort((a, b) => hourToMinutesInWorkWindow(a.startHour) - hourToMinutesInWorkWindow(b.startHour));
   const futureSchedule = schedule.filter(s => s.scheduledDate.toDateString() !== todayDateString);
 
-  // Sort future schedule by date, then time
+  // Sort future schedule by date, then time (respecting night shift order)
   futureSchedule.sort((a, b) => {
     const dateDiff = a.scheduledDate.getTime() - b.scheduledDate.getTime();
-    return dateDiff !== 0 ? dateDiff : a.startHour - b.startHour;
+    return dateDiff !== 0 ? dateDiff : hourToMinutesInWorkWindow(a.startHour) - hourToMinutesInWorkWindow(b.startHour);
   });
 
   // Combine: today's tasks (in AI-priority order) first, then future tasks
   const finalSchedule = [...todaySchedule, ...futureSchedule];
 
   dqlModel?.dispose();
-  return { schedule: finalSchedule, insights, generatedAt: new Date() };
+  return { schedule: finalSchedule, unscheduled: [...unscheduled, ...focusedUnscheduled], insights, generatedAt: new Date() };
 }
 
 // ── Firestore persistence for AI schedule ──
@@ -795,6 +888,16 @@ function serializeScheduleResult(result: AIScheduleResult): object {
   return {
     generatedAt: result.generatedAt.toISOString(),
     insights: result.insights,
+    unscheduled: (result.unscheduled ?? []).map(u => ({
+      reason: u.reason,
+      task: {
+        ...u.task,
+        dueDate: u.task.dueDate instanceof Date ? u.task.dueDate.toISOString() : u.task.dueDate,
+        createdAt: u.task.createdAt instanceof Date ? u.task.createdAt.toISOString() : u.task.createdAt,
+        updatedAt: u.task.updatedAt instanceof Date ? u.task.updatedAt.toISOString() : u.task.updatedAt,
+        deletedAt: u.task.deletedAt instanceof Date ? u.task.deletedAt.toISOString() : (u.task.deletedAt ?? null),
+      },
+    })),
     schedule: result.schedule.map(s => ({
       startHour: s.startHour,
       startTime: s.startTime,
@@ -816,9 +919,21 @@ function serializeScheduleResult(result: AIScheduleResult): object {
 
 function deserializeScheduleResult(data: Record<string, unknown>): AIScheduleResult {
   const rawSchedule = (data.schedule as Record<string, unknown>[]) ?? [];
+  const rawUnscheduled = (data.unscheduled as Record<string, unknown>[]) ?? [];
   return {
     generatedAt: new Date(data.generatedAt as string),
     insights: data.insights as ProductivityInsight,
+    unscheduled: rawUnscheduled.map(u => {
+      const rawTask = u.task as Record<string, unknown>;
+      const task: Task = {
+        ...(rawTask as unknown as Task),
+        dueDate: new Date(rawTask.dueDate as string),
+        createdAt: new Date(rawTask.createdAt as string),
+        updatedAt: new Date(rawTask.updatedAt as string),
+        deletedAt: rawTask.deletedAt ? new Date(rawTask.deletedAt as string) : undefined,
+      };
+      return { task, reason: u.reason as string } as UnscheduledTask;
+    }),
     schedule: rawSchedule.map(s => {
       const rawTask = s.task as Record<string, unknown>;
       const task: Task = {
@@ -842,7 +957,18 @@ function deserializeScheduleResult(data: Record<string, unknown>): AIScheduleRes
   };
 }
 
+const AI_SCHEDULE_LS_KEY = (userId: string) => `tasksync_ai_schedule_${userId}`;
+
 export async function saveAIScheduleToFirestore(userId: string, result: AIScheduleResult): Promise<void> {
+  // localStorage runs synchronously — persists immediately even when called with `void`.
+  // This guarantees the schedule survives a page reload even if the Firestore write is
+  // still in-flight or fails silently.
+  try {
+    localStorage.setItem(AI_SCHEDULE_LS_KEY(userId), JSON.stringify(serializeScheduleResult(result)));
+  } catch (e) {
+    console.warn('[AISchedule] Failed to save schedule to localStorage:', e);
+  }
+  // Firestore write for cross-device persistence.
   try {
     const ref = doc(db, 'ai_schedules', userId);
     await setDoc(ref, serializeScheduleResult(result));
@@ -852,18 +978,46 @@ export async function saveAIScheduleToFirestore(userId: string, result: AISchedu
 }
 
 export async function loadAIScheduleFromFirestore(userId: string): Promise<AIScheduleResult | null> {
+  // Try Firestore first (cross-device).
   try {
     const ref = doc(db, 'ai_schedules', userId);
     const snap = await getDoc(ref);
-    if (!snap.exists()) return null;
-    return deserializeScheduleResult(snap.data() as Record<string, unknown>);
+    if (snap.exists()) {
+      const data = snap.data() as Record<string, unknown>;
+      // Discard schedules saved before the unscheduled-task feature was added.
+      // Old documents lack the 'unscheduled' field, meaning overflow tasks are silently
+      // scheduled at wrong times instead of showing a warning. Force regeneration.
+      // Also discard schedules with empty worstHours (saved before 24-hour pool fix).
+      const insights = data.insights as Record<string, unknown> | undefined;
+      if (Array.isArray(data.unscheduled) && Array.isArray(insights?.worstHours) && (insights.worstHours as unknown[]).length > 0) {
+        return deserializeScheduleResult(data);
+      }
+    }
   } catch (e) {
     console.warn('[AISchedule] Failed to load schedule from Firestore:', e);
-    return null;
   }
+  // Fallback: localStorage (same device, always available).
+  try {
+    const raw = localStorage.getItem(AI_SCHEDULE_LS_KEY(userId));
+    if (raw) {
+      const data = JSON.parse(raw) as Record<string, unknown>;
+      const insights = data.insights as Record<string, unknown> | undefined;
+      if (Array.isArray(data.unscheduled) && Array.isArray(insights?.worstHours) && (insights.worstHours as unknown[]).length > 0) {
+        return deserializeScheduleResult(data);
+      }
+    }
+  } catch (e) {
+    console.warn('[AISchedule] Failed to load schedule from localStorage:', e);
+  }
+  return null;
 }
 
 export async function clearAIScheduleFromFirestore(userId: string): Promise<void> {
+  try {
+    localStorage.removeItem(AI_SCHEDULE_LS_KEY(userId));
+  } catch (e) {
+    console.warn('[AISchedule] Failed to clear schedule from localStorage:', e);
+  }
   try {
     const ref = doc(db, 'ai_schedules', userId);
     await deleteDoc(ref);

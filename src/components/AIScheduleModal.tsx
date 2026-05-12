@@ -1,6 +1,7 @@
 import React from 'react';
 import { X, Sparkles, Clock, TrendingUp, TrendingDown, CheckCircle, AlertCircle, Zap } from 'lucide-react';
 import { AIScheduleResult } from '@/services/AIScheduleService';
+import { useTaskStore } from '@/store/taskStore';
 
 interface AIScheduleModalProps {
   result: AIScheduleResult;
@@ -33,8 +34,35 @@ const confidenceBg = (pct: number) => {
   return 'bg-red-400';
 };
 
+// Parse "9:00 AM" / "5:30 PM" → total minutes from midnight
+const parseTimeToMins = (time: string): number => {
+  const match = time.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return 0;
+  let h = parseInt(match[1]);
+  const m = parseInt(match[2]);
+  const period = match[3].toUpperCase();
+  if (period === 'PM' && h !== 12) h += 12;
+  if (period === 'AM' && h === 12) h = 0;
+  return h * 60 + m;
+};
+
 const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) => {
-  const { schedule, insights, generatedAt } = result;
+  const { schedule, unscheduled, insights, generatedAt } = result;
+  const scheduleSettings = useTaskStore((state) => state.scheduleSettings);
+
+  // Returns true when a scheduled item's time falls outside the current work window.
+  const isOutsideTimeframe = (startTime: string, endTime: string): boolean => {
+    const startMins = parseTimeToMins(startTime);
+    const endMins   = parseTimeToMins(endTime);
+    const wsStart   = scheduleSettings.workStart * 60;
+    const wsEnd     = scheduleSettings.workEnd   * 60;
+    if (scheduleSettings.workStart <= scheduleSettings.workEnd) {
+      return startMins < wsStart || endMins > wsEnd;
+    }
+    const inEveningBlock = startMins >= wsStart && endMins <= 24 * 60;
+    const inMorningBlock = startMins >= 0 && endMins <= wsEnd;
+    return !(inEveningBlock || inMorningBlock);
+  };
 
   const handleClose = () => {
     onClose();
@@ -96,6 +124,27 @@ const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) =>
             </div>
           )}
 
+          {/* Unschedulable tasks warning */}
+          {unscheduled && unscheduled.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
+              <div className="flex items-center gap-2 text-red-700 font-semibold text-sm">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                {unscheduled.length === 1
+                  ? '1 task cannot fit within your configured available timeframe'
+                  : `${unscheduled.length} tasks cannot fit within your configured available timeframe`}
+              </div>
+              <div className="space-y-1.5">
+                {unscheduled.map(u => (
+                  <div key={u.task.id} className="bg-white border border-red-100 rounded-lg px-3 py-2">
+                    <p className="font-medium text-gray-900 text-sm truncate">{u.task.title}</p>
+                    <p className="text-xs text-red-600 mt-0.5">{u.reason}</p>
+                    <p className="text-xs text-gray-400 mt-1">Tip: Reduce the estimated duration or expand your work hours in Settings.</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Schedule list */}
           {schedule.length === 0 ? (
             <div className="text-center text-gray-500 py-10">
@@ -124,44 +173,64 @@ const AIScheduleModal: React.FC<AIScheduleModalProps> = ({ result, onClose }) =>
                           {dateLabel}
                         </div>
                       )}
-                      <div className="border border-gray-200 rounded-xl p-4 flex items-start gap-4 hover:border-indigo-300 transition-colors">
-                        {/* Index */}
-                        <div className="flex-shrink-0 w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold flex items-center justify-center">
-                          {idx + 1}
-                        </div>
+                      {(() => {
+                        const outside = isOutsideTimeframe(item.startTime, item.endTime);
+                        return (
+                          <div className={`border rounded-xl p-4 flex items-start gap-4 transition-colors ${
+                            outside
+                              ? 'border-red-200 bg-red-50'
+                              : 'border-gray-200 hover:border-indigo-300'
+                          }`}>
+                            {/* Index / warning icon */}
+                            <div className={`flex-shrink-0 w-7 h-7 rounded-full text-xs font-bold flex items-center justify-center ${
+                              outside ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-700'
+                            }`}>
+                              {outside ? <AlertCircle className="w-4 h-4" /> : idx + 1}
+                            </div>
 
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-semibold text-gray-900 truncate">{item.task.title}</span>
-                            <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${PRIORITY_COLORS[item.task.priority] ?? ''}`}>
-                              Priority: {item.task.priority.charAt(0).toUpperCase() + item.task.priority.slice(1)}
-                            </span>
-                          </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-semibold text-gray-900 truncate">{item.task.title}</span>
+                                <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${PRIORITY_COLORS[item.task.priority] ?? ''}`}>
+                                  Priority: {item.task.priority.charAt(0).toUpperCase() + item.task.priority.slice(1)}
+                                </span>
+                              </div>
 
-                          <div className="flex items-center gap-1 mt-1 text-sm text-gray-500">
-                            <Clock className="w-3.5 h-3.5" />
-                            <span>{item.startTime} – {item.endTime}</span>
-                            <span className="mx-1">·</span>
-                            <span>{item.durationMins} min</span>
-                          </div>
+                              {outside ? (
+                                <p className="text-xs text-red-600 font-medium mt-1">
+                                  This task cannot fit within your configured available timeframe.
+                                </p>
+                              ) : (
+                                <>
+                                  <div className="flex items-center gap-1 mt-1 text-sm text-gray-500">
+                                    <Clock className="w-3.5 h-3.5" />
+                                    <span>{item.startTime} – {item.endTime}</span>
+                                    <span className="mx-1">·</span>
+                                    <span>{item.durationMins} min</span>
+                                  </div>
+                                  <p className="text-xs text-gray-400 mt-1">{item.reason}</p>
+                                </>
+                              )}
+                            </div>
 
-                          <p className="text-xs text-gray-400 mt-1">{item.reason}</p>
-                        </div>
-
-                        {/* Confidence bar */}
-                        <div className="flex-shrink-0 text-right">
-                          <div className={`text-sm font-bold ${confidenceColor(item.confidence)}`}>
-                            {item.confidence}%
+                            {/* Confidence bar — hidden for out-of-timeframe tasks */}
+                            {!outside && (
+                              <div className="flex-shrink-0 text-right">
+                                <div className={`text-sm font-bold ${confidenceColor(item.confidence)}`}>
+                                  {item.confidence}%
+                                </div>
+                                <div className="w-16 h-1.5 bg-gray-100 rounded-full mt-1 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${confidenceBg(item.confidence)}`}
+                                    style={{ width: `${item.confidence}%` }}
+                                  />
+                                </div>
+                                <div className="text-xs text-gray-400 mt-0.5">confidence</div>
+                              </div>
+                            )}
                           </div>
-                          <div className="w-16 h-1.5 bg-gray-100 rounded-full mt-1 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${confidenceBg(item.confidence)}`}
-                              style={{ width: `${item.confidence}%` }}
-                            />
-                          </div>
-                          <div className="text-xs text-gray-400 mt-0.5">confidence</div>
-                        </div>
-                      </div>
+                        );
+                      })()}
                     </div>
                   );
                 });

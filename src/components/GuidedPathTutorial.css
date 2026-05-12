@@ -161,22 +161,6 @@
 
   body.guided-path-mobile-task-form-creation [data-tour="task-form-container"] {
     max-height: 58vh;
-    transform: translateY(-18vh);
-  }
-
-  body.guided-path-mobile-settings-work-schedule [data-tour="work-schedule"] {
-    margin-bottom: 38vh;
-  }
-
-  body.guided-path-mobile-settings-wellbeing-ai-behavior [data-tour="wellbeing-ai-behavior"],
-  body.guided-path-mobile-ai-schedule-reminder-continue [data-tour="ai-schedule-continue-button"],
-  body.guided-path-mobile-scheduler-best-hours [data-tour="scheduler-best-hours"],
-  body.guided-path-mobile-scheduler-lowest-hours [data-tour="scheduler-lowest-hours"],
-  body.guided-path-mobile-scheduler-confidence-score [data-tour="scheduler-confidence-score"],
-  body.guided-path-mobile-calendar-view [data-tour="calendar-grid"],
-  body.guided-path-mobile-analytics-completion-chart [data-tour="analytics-page"],
-  body.guided-path-mobile-settings-redo-button [data-tour="redo-tutorial-button"] {
-    margin-top: 38vh;
   }
 }
 
@@ -209,11 +193,6 @@
     height: 32px;
   }
 
-  /* Ensure tooltip doesn't exceed viewport on very small screens */
-  .guided-path-tooltip .flex {
-    flex-direction: column;
-  }
-
   .guided-path-tooltip button {
     font-size: 12px;
     padding: 8px 12px;
@@ -225,7 +204,6 @@
 
   body.guided-path-mobile-task-form-creation [data-tour="task-form-container"] {
     max-height: 56vh;
-    transform: translateY(-19vh);
   }
 }
 

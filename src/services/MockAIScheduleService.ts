@@ -68,6 +68,7 @@ export function generateMockAISchedule(tasks: Task[]): AIScheduleResult {
 
   return {
     schedule,
+    unscheduled: [],
     insights,
     generatedAt: now,
   };

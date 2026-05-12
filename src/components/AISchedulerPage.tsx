@@ -46,6 +46,28 @@ interface AISchedulerPageProps {
 
 const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage, selectedTaskId, sampleData }) => {
   const aiScheduleResult = sampleData || useTaskStore((state) => state.getAIScheduleResult());
+  const scheduleSettings = useTaskStore((state) => state.scheduleSettings);
+  const liveTasks = useTaskStore((state) => state.tasks);
+  const completedIds = new Set(liveTasks.filter(t => t.status === 'completed').map(t => t.id));
+  // Map of live task data keyed by id — used to reflect edits (title changes) and detect deletions.
+  const liveTaskMap = new Map(liveTasks.map(t => [t.id, t]));
+
+  // Returns true when a scheduled item's time falls outside the current work window.
+  // This can happen when the schedule was saved under different settings (e.g. from Firestore).
+  const isOutsideTimeframe = (startTime: string, endTime: string): boolean => {
+    const startMins = parseTimeToMins(startTime);
+    const endMins   = parseTimeToMins(endTime);
+    const wsStart   = scheduleSettings.workStart * 60;
+    const wsEnd     = scheduleSettings.workEnd   * 60;
+    if (scheduleSettings.workStart <= scheduleSettings.workEnd) {
+      // Normal day shift
+      return startMins < wsStart || endMins > wsEnd;
+    }
+    // Night shift: valid range is [workStart*60, 24*60) ∪ [0, workEnd*60]
+    const inEveningBlock = startMins >= wsStart && endMins <= 24 * 60;
+    const inMorningBlock = startMins >= 0 && endMins <= wsEnd;
+    return !(inEveningBlock || inMorningBlock);
+  };
 
   // Scroll to selected task when it changes
   useEffect(() => {
@@ -96,6 +118,8 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
   }
 
   const { schedule, insights, generatedAt } = aiScheduleResult;
+  // Hide tasks the user has completed, deleted, or that no longer exist since the schedule was generated.
+  const activeSchedule = schedule.filter(s => !completedIds.has(s.task.id) && liveTaskMap.has(s.task.id));
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-6 sm:py-8 space-y-8">
@@ -165,10 +189,36 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
         </div>
       )}
 
+      {/* Unscheduled tasks warning */}
+      {aiScheduleResult.unscheduled && aiScheduleResult.unscheduled.length > 0 && (
+        <div className="tasks-page-section bg-red-50 border border-red-200 rounded-xl p-5 space-y-3">
+          <div className="flex items-center gap-2 text-red-700 font-semibold">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            {aiScheduleResult.unscheduled.length === 1
+              ? '1 task could not be scheduled'
+              : `${aiScheduleResult.unscheduled.length} tasks could not be scheduled`}
+          </div>
+          <div className="space-y-2">
+            {aiScheduleResult.unscheduled.map(u => (
+              <div key={u.task.id} className="flex items-start gap-3 bg-white border border-red-100 rounded-lg px-4 py-3">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                <div className="min-w-0">
+                  <p className="font-medium text-gray-900 truncate">{u.task.title}</p>
+                  <p className="text-xs text-red-600 mt-0.5">{u.reason}</p>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Tip: Reduce the task's estimated duration, or adjust your work hours in AI Schedule Settings.
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Schedule List */}
       <div className="tasks-page-section">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Your AI Schedule</h2>
-        {schedule.length === 0 ? (
+        {activeSchedule.length === 0 ? (
           <div className="text-center py-12">
             <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-400" />
             <p className="text-gray-500 font-medium">No tasks to schedule.</p>
@@ -179,7 +229,7 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
             {(() => {
               const today = new Date(); today.setHours(0,0,0,0);
               let lastDateKey = '';
-              return schedule.map((item, idx) => {
+              return activeSchedule.map((item, idx) => {
                 const dayKey = item.scheduledDate.toDateString();
                 const showHeader = dayKey !== lastDateKey;
                 lastDateKey = dayKey;
@@ -196,7 +246,7 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
                     )}
                     {/* Break indicator between consecutive tasks on the same day */}
                     {!showHeader && (() => {
-                      const prev = schedule[idx - 1];
+                      const prev = activeSchedule[idx - 1];
                       if (prev.scheduledDate.toDateString() !== item.scheduledDate.toDateString()) return null;
                       const breakMins = parseTimeToMins(item.startTime) - parseTimeToMins(prev.endTime);
                       if (breakMins > 0) {
@@ -217,59 +267,77 @@ const AISchedulerPage: React.FC<AISchedulerPageProps> = ({ notEnoughDataMessage,
                         </div>
                       );
                     })()}
-                    <div id={`task-${item.task.id}`} className={`border rounded-xl p-6 transition-all ${
-                      selectedTaskId === item.task.id
-                        ? 'border-indigo-500 bg-indigo-50 shadow-lg ring-2 ring-indigo-300'
-                        : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
-                    }`}>
-                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                        {/* Task Info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-sm">
-                              {idx + 1}
-                            </span>
-                            <h3 className="text-lg font-semibold text-gray-900 truncate">{item.task.title}</h3>
-                            <span
-                              className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
-                                PRIORITY_COLORS[item.task.priority] ?? ''
-                              }`}
-                            >
-                              Priority: {item.task.priority.charAt(0).toUpperCase() + item.task.priority.slice(1)}
-                            </span>
-                          </div>
+                    {(() => {
+                      const outside = isOutsideTimeframe(item.startTime, item.endTime);
+                      return (
+                        <div id={`task-${item.task.id}`} className={`border rounded-xl p-6 transition-all ${
+                          outside
+                            ? 'border-red-300 bg-red-50'
+                            : selectedTaskId === item.task.id
+                              ? 'border-indigo-500 bg-indigo-50 shadow-lg ring-2 ring-indigo-300'
+                              : 'border-gray-200 hover:border-indigo-300 hover:shadow-md'
+                        }`}>
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                            {/* Task Info */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-3 flex-wrap">
+                                <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${
+                                  outside ? 'bg-red-100 text-red-600' : 'bg-indigo-100 text-indigo-700'
+                                }`}>
+                                  {outside ? <AlertCircle className="w-4 h-4" /> : idx + 1}
+                                </span>
+                                <h3 className="text-lg font-semibold text-gray-900 truncate">{liveTaskMap.get(item.task.id)?.title ?? item.task.title}</h3>
+                                <span
+                                  className={`text-xs px-2.5 py-1 rounded-full border font-medium ${
+                                    PRIORITY_COLORS[item.task.priority] ?? ''
+                                  }`}
+                                >
+                                  Priority: {item.task.priority.charAt(0).toUpperCase() + item.task.priority.slice(1)}
+                                </span>
+                              </div>
 
-                          {item.task.description && (
-                            <p className="text-sm text-gray-500 mt-2 line-clamp-2">{item.task.description}</p>
-                          )}
+                              {item.task.description && (
+                                <p className="text-sm text-gray-500 mt-2 line-clamp-2">{item.task.description}</p>
+                              )}
 
-                          <div className="flex items-center gap-4 mt-3 text-sm text-gray-600">
-                            <div className="flex items-center gap-1">
-                              <Clock className="w-4 h-4" />
-                              <span>{item.startTime} – {item.endTime}</span>
+                              {outside ? (
+                                <p className="text-sm text-red-600 font-medium mt-3">
+                                  This task cannot fit within your configured available timeframe.
+                                </p>
+                              ) : (
+                                <>
+                                  <div className="flex items-center gap-4 mt-3 text-sm text-gray-600">
+                                    <div className="flex items-center gap-1">
+                                      <Clock className="w-4 h-4" />
+                                      <span>{item.startTime} – {item.endTime}</span>
+                                    </div>
+                                    <span className="text-gray-400">•</span>
+                                    <span>{item.durationMins} min</span>
+                                  </div>
+                                  <p className="text-xs text-gray-400 mt-2">{item.reason}</p>
+                                </>
+                              )}
                             </div>
-                            <span className="text-gray-400">•</span>
-                            <span>{item.durationMins} min</span>
-                          </div>
 
-                          <p className="text-xs text-gray-400 mt-2">{item.reason}</p>
-                        </div>
-
-                        {/* Confidence Badge */}
-                        <div className="flex flex-col items-end gap-2" data-tour="scheduler-confidence-score">
-                          <div className={`text-2xl font-bold ${confidenceColor(item.confidence)}`}>
-                            {item.confidence}%
+                            {/* Confidence Badge — hidden for out-of-timeframe tasks */}
+                            {!outside && (
+                              <div className="flex flex-col items-end gap-2" data-tour="scheduler-confidence-score">
+                                <div className={`text-2xl font-bold ${confidenceColor(item.confidence)}`}>
+                                  {item.confidence}%
+                                </div>
+                                <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full ${confidenceBg(item.confidence)}`}
+                                    style={{ width: `${item.confidence}%` }}
+                                  />
+                                </div>
+                                <div className="text-xs text-gray-400">confidence</div>
+                              </div>
+                            )}
                           </div>
-                          <div className="w-20 h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${confidenceBg(item.confidence)}`}
-                              style={{ width: `${item.confidence}%` }}
-                            />
-                          </div>
-                          <div className="text-xs text-gray-400">confidence</div>
                         </div>
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </div>
                 );
               });

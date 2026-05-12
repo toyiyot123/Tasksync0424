@@ -179,8 +179,17 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       const { isActive, currentStepIndex, steps } = useTutorialStore.getState();
       const currentStep = steps[currentStepIndex];
       
-      // Show form on Step 3 (task-form-creation)
       if (isActive && currentStep?.id === 'task-form-creation') {
+        const hasExistingRealTasks = useTaskStore.getState().tasks.some(t => !t.isFromTutorial);
+
+        if (hasExistingRealTasks) {
+          // For old users, close the form but keep Step 3 visible
+          // Let user manually click Next to proceed
+          setShowForm(false);
+          return;
+        }
+
+        // Show form on Step 3 only for new users without existing tasks.
         setShowForm(true);
       } else {
         setShowForm(false);
@@ -262,9 +271,27 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           );
         });
         
-        setAIScheduleResult(null);
-        setStoreAIScheduleResult(null);
         setShowAIScheduleModal(false);
+
+        // For old users who already had a generated schedule, restore it from Firestore
+        // instead of wiping it. For brand-new users, clear the mock schedule.
+        if (!shouldResetTasks && auth.currentUser) {
+          loadAIScheduleFromFirestore(auth.currentUser.uid).then(persisted => {
+            if (persisted) {
+              setAIScheduleResult(persisted);
+              setStoreAIScheduleResult(persisted);
+            } else {
+              setAIScheduleResult(null);
+              setStoreAIScheduleResult(null);
+            }
+          }).catch(() => {
+            setAIScheduleResult(null);
+            setStoreAIScheduleResult(null);
+          });
+        } else {
+          setAIScheduleResult(null);
+          setStoreAIScheduleResult(null);
+        }
         
         // Lock AI Schedule after tutorial until the user has enough real completed task history.
         if (realCompletedCount < 6) {
@@ -276,22 +303,35 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
     return () => unsubscribe();
   }, [setStoreAIScheduleResult, setTasks, tasks]);
 
-  // When page loads after tutorial, show locked message only if user doesn't have enough real tasks
+  // When page loads after tutorial, show locked message only if user doesn't have enough real tasks.
+  // IMPORTANT: Guard with `tasksLoaded` to prevent a race condition where this effect fires
+  // after tasks load but *before* the persisted AI schedule is fetched from Firestore.
+  // Without this guard, `aiScheduleResult` is still null at that point and `scheduleError`
+  // gets set prematurely — causing the locked UI to appear even when a valid schedule exists.
   useEffect(() => {
+    if (!tasksLoaded) return; // Wait until tasks AND the AI schedule have been restored from Firestore
     const { hasCompletedTutorial, isActive } = useTutorialStore.getState();
-    // Only show locked message if tutorial is NOT active AND tutorial is completed AND no schedule AND no error set
-    if (!isActive && hasCompletedTutorial && !aiScheduleResult && !scheduleError) {
+    // Show/clear locked message based on current completed task count (re-evaluated on every tasks change).
+    // The outer condition no longer guards on !scheduleError so that a stale lock is cleared
+    // as soon as the user completes enough tasks.
+    if (!isActive && hasCompletedTutorial && !aiScheduleResult) {
       const realTasks = tasks.filter(t => !t.isFromTutorial);
       const completedCount = realTasks.filter(t => t.status === 'completed').length;
       if (completedCount < 6) {
-        setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
+        if (!scheduleError) {
+          setScheduleError(`You need at least 6 completed task records to use AI Schedule. You currently have ${completedCount}.`);
+        }
+      } else {
+        // User now has enough completed tasks — clear any stale lock message so
+        // "No Schedule Generated Yet" is shown instead of "AI Schedule Locked".
+        if (scheduleError) setScheduleError(null);
       }
     }
     // During tutorial, clear any error message so schedule displays
     if (isActive && scheduleError) {
       setScheduleError(null);
     }
-  }, [tasks, aiScheduleResult, scheduleError]);
+  }, [tasks, aiScheduleResult, scheduleError, tasksLoaded]);
 
   useEffect(() => {
     const loadCategories = async () => {
@@ -428,7 +468,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           // ===== NOW Update overdue task statuses (after tasks are loaded) =====
           console.log('[App] Updating overdue task statuses...');
           try {
-            const updated = await OverdueTaskService.updateOverdueTasksFromAppState(firebaseUser.uid, tasksWithMetadata);
+            const updated = await OverdueTaskService.updateOverdueTasksFromAppState(firebaseUser.uid, tasksWithMetadata, firebaseUser.email || undefined);
             console.log(`[App] OverdueTaskService completed: ${updated} tasks updated`);
             
             // Expose global functions for console debugging
@@ -605,6 +645,9 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
           if (persistedSchedule) {
             setAIScheduleResult(persistedSchedule);
             setStoreAIScheduleResult(persistedSchedule);
+            // Clear any schedule error that may have been set prematurely by the
+            // locked-state effect before this async fetch completed (race condition guard).
+            setScheduleError(null);
           }
 
           tasksReadyRef.current = true;
@@ -760,24 +803,29 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
       }
     }
     
-    // Handle tutorial progression: STEP 3 requires creating 6 tasks before advancing to STEP 4
+    // Handle tutorial progression: STEP 3 requires creating 6 tasks only for users with no existing tasks.
     const { isActive, currentStepIndex, steps, nextStep } = useTutorialStore.getState();
     const currentStep = steps[currentStepIndex];
     
     if (isActive && currentStep?.id === 'task-form-creation') {
       // Get all tutorial tasks created so far
       const allTasks = getTasks();
+      const hasExistingRealTasks = allTasks.some(t => !t.isFromTutorial);
       const createdTutorialTasks = allTasks.filter(
         t => t.isFromTutorial
       ).length;
       
-      // Only proceed to step 4 if 6 tasks are created, otherwise form stays open
-      if (createdTutorialTasks >= 6) {
+      // Only auto-advance for new users who have created 6 tasks
+      if (!hasExistingRealTasks && createdTutorialTasks >= 6) {
         setShowForm(false);
         nextStep();
-      } else {
-        // Keep form open, don't close it
+      } else if (!hasExistingRealTasks) {
+        // Keep form open for new users until they create 6 tasks
         setShowForm(true);
+      } else {
+        // For old users, just close form but don't auto-advance
+        // Let them manually click Next to proceed
+        setShowForm(false);
       }
     } else {
       setShowForm(false);
@@ -1132,7 +1180,7 @@ const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
             <p className="text-gray-600 text-sm mb-6">
               Before generating your AI schedule, make sure you've configured your preferences in <span className="font-semibold text-indigo-600">Settings</span> — such as work hours, break duration, and stress level — for the best results.
             </p>
-            <div className="flex gap-3">
+            <div className="flex flex-col sm:flex-row gap-3">
               <button
                 onClick={handleScheduleGoToSettings}
                 data-tour="ai-schedule-go-to-settings"

@@ -22,12 +22,16 @@ const GuidedPathTutorial: React.FC = () => {
   const currentStep = steps[currentStepIndex];
   const mobileTooltipMode = isMobile && currentStep ? `guided-path-mobile-${currentStep.id}` : '';
   
-  // Step 3 loops task creation until 6 tutorial tasks exist.
+  // Step 3 only loops for brand-new users who had no real tasks before the tutorial.
   const isStep3 = currentStep?.id === 'task-form-creation';
   const tutorialTasks = tasks.filter(t => t.isFromTutorial);
+  const realTasks = tasks.filter(t => !t.isFromTutorial);
   const createdTutorialTasks = tutorialTasks.length;
+  const isNewUser = realTasks.length === 0;
+  const shouldLoopStep3 = isStep3 && isNewUser;
   const hasCreatedSixTutorialTasks = createdTutorialTasks >= 6;
-  const canProceedToStep4 = !isStep3 || hasCreatedSixTutorialTasks;
+  // On Step 3: new users must create 6 tasks, old users can proceed. On other steps: always allow.
+  const canProceedToStep4 = !isStep3 || !isNewUser || hasCreatedSixTutorialTasks;
   
   // Track mobile viewport
   useEffect(() => {
@@ -224,38 +228,33 @@ const GuidedPathTutorial: React.FC = () => {
     const tooltipWidth = Math.min(Math.max(tooltipRect.width, 260), isMobile ? window.innerWidth - 24 : 380);
     const tooltipHeight = Math.max(tooltipRect.height, 100);
 
-    if (isMobile && currentStep) {
-      const mobileBottomSteps = new Set([
-        'task-form-creation',
-        'settings-work-schedule',
-      ]);
+    if (isMobile && currentStep && elementPosition) {
+      // Dynamically place tooltip on the opposite side of the highlighted element
+      // so it never covers the content the user needs to see.
+      const elementCenterY = elementPosition.top + elementPosition.height / 2;
+      const centeredLeft = Math.max(
+        screenPadding,
+        Math.min((window.innerWidth - tooltipWidth) / 2, window.innerWidth - tooltipWidth - screenPadding)
+      );
 
-      const mobileTopSteps = new Set([
-        'settings-wellbeing-ai-behavior',
-        'ai-schedule-reminder-continue',
-        'scheduler-best-hours',
-        'scheduler-lowest-hours',
-        'scheduler-confidence-score',
-        'calendar-view',
-        'analytics-completion-chart',
-        'settings-redo-button',
-      ]);
+      // For the task form, the submit button is at the bottom of the form.
+      // Always place the tooltip at the top so the create button remains accessible.
+      const forceTop = currentStep.id === 'task-form-creation';
 
-      if (mobileBottomSteps.has(currentStep.id)) {
-        setTooltipPosition({
-          top: window.innerHeight - tooltipHeight - screenPadding,
-          left: (window.innerWidth - tooltipWidth) / 2,
-        });
-        return;
-      }
-
-      if (mobileTopSteps.has(currentStep.id)) {
+      if (forceTop || elementCenterY >= window.innerHeight / 2) {
+        // Element in lower half (or forced) → tooltip at top
         setTooltipPosition({
           top: screenPadding,
-          left: (window.innerWidth - tooltipWidth) / 2,
+          left: centeredLeft,
         });
-        return;
+      } else {
+        // Element in upper half → tooltip at bottom
+        setTooltipPosition({
+          top: window.innerHeight - tooltipHeight - screenPadding,
+          left: centeredLeft,
+        });
       }
+      return;
     }
 
     // Smart position selection based on available space
@@ -361,7 +360,7 @@ const GuidedPathTutorial: React.FC = () => {
           left: tooltipPosition.left,
         }}
       >
-        <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="flex items-center justify-between gap-3 mb-2">
           <h3 className="text-lg font-bold text-slate-900">{currentStep.title}</h3>
           <button
             onClick={skipTutorial}
@@ -376,14 +375,16 @@ const GuidedPathTutorial: React.FC = () => {
           {currentStep.message}
         </p>
 
-        {/* Step 3 Progress: Show created task count */}
+        {/* Step 3 Progress: Show created task count for all users */}
         {isStep3 && (
           <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
             <p className="text-sm font-semibold text-blue-900">
               Create 6 Tasks: {Math.min(createdTutorialTasks, 6)}/6
             </p>
             <p className="text-xs text-blue-700 mt-1">
-              The form will stay open until you create all 6 tutorial tasks.
+              {isNewUser 
+                ? 'The form will stay open until you create all 6 tutorial tasks.'
+                : 'You can create additional tasks or proceed to the next step.'}
             </p>
           </div>
         )}
@@ -397,12 +398,20 @@ const GuidedPathTutorial: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
             Step {progress} of {total}
           </span>
 
-          <div className="flex gap-2">
+          {isStep3 && isNewUser && !hasCreatedSixTutorialTasks && (
+            <div className="text-sm font-medium text-slate-600 md:hidden">
+              {createdTutorialTasks === 0 
+                ? 'Create your first task ->'
+                : `${6 - createdTutorialTasks} more task${6 - createdTutorialTasks !== 1 ? 's' : ''} to create ->`}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-2 w-full md:w-auto">
             {currentStepIndex > 0 && (
               <button
                 onClick={previousStep}
@@ -413,8 +422,8 @@ const GuidedPathTutorial: React.FC = () => {
               </button>
             )}
 
-            {isStep3 && !hasCreatedSixTutorialTasks && (
-              <div className="text-sm font-medium text-slate-600">
+            {isStep3 && isNewUser && !hasCreatedSixTutorialTasks && (
+              <div className="hidden md:block text-sm font-medium text-slate-600">
                 {createdTutorialTasks === 0 
                   ? 'Create your first task ->'
                   : `${6 - createdTutorialTasks} more task${6 - createdTutorialTasks !== 1 ? 's' : ''} to create ->`}
@@ -424,7 +433,7 @@ const GuidedPathTutorial: React.FC = () => {
             <button
               onClick={nextStep}
               disabled={!canProceedToStep4}
-              className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all ${
+              className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all flex-1 md:flex-none justify-center md:justify-start ${
                 canProceedToStep4
                   ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:opacity-90'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'

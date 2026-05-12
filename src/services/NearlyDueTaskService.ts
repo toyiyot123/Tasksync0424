@@ -7,8 +7,30 @@ import { Task } from '@/types';
  * Tracks which tasks have been notified about
  */
 
-// Track which tasks we've already sent notifications for (taskId -> timestamp)
-const notifiedTaskIds = new Map<string, number>();
+// Track which tasks we've already sent notifications for today, persisted to localStorage
+// so page refreshes don't re-send the same email.
+const NEARLY_DUE_STORAGE_KEY_PREFIX = 'tasksync_nearly_due_notified_';
+
+function getTodayKeyNearlyDue(): string {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' }); // YYYY-MM-DD
+}
+
+function getNotifiedToday(): Set<string> {
+  try {
+    const raw = localStorage.getItem(NEARLY_DUE_STORAGE_KEY_PREFIX + getTodayKeyNearlyDue());
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function markTaskNotified(taskId: string): void {
+  try {
+    const set = getNotifiedToday();
+    set.add(taskId);
+    localStorage.setItem(NEARLY_DUE_STORAGE_KEY_PREFIX + getTodayKeyNearlyDue(), JSON.stringify([...set]));
+  } catch { /* ignore storage errors */ }
+}
 
 function normalizeDueDate(dueDate: any): Date {
   if (!dueDate) {
@@ -50,9 +72,9 @@ async function sendNearlyDueNotificationEmail(
     }
 
     const EMAILJS_API_URL = 'https://api.emailjs.com/api/v1.0/email/send';
-    const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || 'service_mjgbtih';
-    const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_NEARLY_DUE_TEMPLATE_ID || 'template_4dxvv8d';
-    const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || '9Dw-9GkNwVvoLmb1q';
+    const EMAILJS_SERVICE_ID = import.meta.env.VITE_EMAILJS_SERVICE_ID || 'service_oys4rrh';
+    const EMAILJS_TEMPLATE_ID = import.meta.env.VITE_EMAILJS_NEARLY_DUE_TEMPLATE_ID || 'template_nx6ojrh';
+    const EMAILJS_PUBLIC_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY || 'yHIdKseofyA7jzjcF';
 
     console.log(`[NearlyDueTaskService] Using EmailJS:`);
     console.log(`  Service ID: ${EMAILJS_SERVICE_ID}`);
@@ -67,7 +89,7 @@ async function sendNearlyDueNotificationEmail(
             year: 'numeric'
           })
         : 'No due date';
-      const priority = (task.priority || task.priority_manual || 'medium').toUpperCase();
+      const priority = (task.priority || 'medium').toUpperCase();
       return `<tr>
           <td style="padding: 12px; border: 1px solid #ddd;">${task.title || 'Untitled'}</td>
           <td style="padding: 12px; border: 1px solid #ddd;">${priority}</td>
@@ -248,11 +270,12 @@ export class NearlyDueTaskService {
         console.log(`  Is nearly due (${dueDateAtMidnight.toISOString()} in range [${tomorrowAtMidnight.toISOString()}, ${dayAfterTomorrowAtMidnight.toISOString()})): ${isNearlyDue}`);
 
         if (isNearlyDue) {
-          // Check if we haven't notified about this task yet
-          if (!notifiedTaskIds.has(task.id)) {
+          // Check if we haven't notified about this task yet today
+          const notifiedToday = getNotifiedToday();
+          if (!notifiedToday.has(task.id)) {
             console.log(`  → 🔔 Nearly-due task! Adding to notification list...`);
             nearlyDueTasks.push(task);
-            notifiedTaskIds.set(task.id, now.getTime());
+            markTaskNotified(task.id);
             found++;
           } else {
             console.log(`  → Already notified about this task today`);
@@ -321,8 +344,12 @@ export class NearlyDueTaskService {
    * Call from console: debugResetNearlyDueNotified()
    */
   static debugResetNotified(): void {
-    console.log(`[NearlyDueTaskService] Resetting ${notifiedTaskIds.size} notified task IDs`);
-    notifiedTaskIds.clear();
-    console.log(`[NearlyDueTaskService] ✅ All notified task IDs cleared`);
+    try {
+      const key = NEARLY_DUE_STORAGE_KEY_PREFIX + getTodayKeyNearlyDue();
+      localStorage.removeItem(key);
+      console.log(`[NearlyDueTaskService] ✅ All notified task IDs cleared from localStorage`);
+    } catch {
+      console.warn('[NearlyDueTaskService] Could not clear localStorage');
+    }
   }
 }

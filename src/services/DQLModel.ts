@@ -181,8 +181,10 @@ export class DQLSchedulerModel {
     const maxQ      = Math.max(...qValues);
     const bestAction = qValues.indexOf(maxQ);
 
-    // Map Q range (≈ –5 to +10) → 0–100 confidence
-    const confidence = Math.min(100, Math.max(10, Math.round(((maxQ + 5) / 15) * 100)));
+    // Map Q range (≈ 0 to +15) → 0–100 confidence
+    // Using a wider range to avoid saturation with small datasets where Q-values
+    // can exceed the original (-5 to +10) assumption and falsely show 100% for all tasks.
+    const confidence = Math.min(100, Math.max(10, Math.round((maxQ / 15) * 100)));
 
     return { bestHour: 8 + bestAction, maxQValue: maxQ, confidence };
   }
